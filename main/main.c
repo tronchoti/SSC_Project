@@ -15,6 +15,9 @@
 #define HOR_SEP_UP(width)    printf("┌"); REPEAT_CHAR("─", width); printf("┐\n")
 #define HOR_SEP_MID(width)   printf("├"); REPEAT_CHAR("─", width); printf("┤\n")
 #define HOR_SEP_DW(width)    printf("└"); REPEAT_CHAR("─", width); printf("┘\n")
+#define HOR_SEP_TABLE_UP(width) printf("┌"); REPEAT_CHAR("─", (width/2)-1); printf("┬"); REPEAT_CHAR("─", (width/2)); printf("┐\n");
+#define HOR_SEP_TABLE_MID(width) printf("├"); REPEAT_CHAR("─", (width/2)-1); printf("┼"); REPEAT_CHAR("─", (width/2)); printf("┤\n");
+#define HOR_SEP_TABLE_DW(width) printf("└"); REPEAT_CHAR("─", (width/2)-1); printf("┴"); REPEAT_CHAR("─", (width/2)); printf("┘\n");
 
 // Doesn't work for some reason
 //#define HOR_SEP_UP(width)    printf("┌%-*c┐\n", width, 126)
@@ -187,8 +190,68 @@ uint16_t print_settings(uint16_t option){
     }
     return 1;
 }
+void measure(int GPIO_PIN, int freq, int measure_type){
 
-void measure(int GPIO_PIN, int freq){
+    // set GREEN LED STATUS ON
+    gpio_set_level(GPIO_NUM_11, 0);
+    gpio_set_level(GPIO_NUM_10, 1);
+
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12); //prints info
+    clear_screen();
+    int last_avg = 0;
+    int last_vals[10];
+    float delta_num = 0.0;
+    float delta_perc = 0.0;
+    struct measures m1;
+    int counter = 0;
+    
+    while(1){
+
+        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
+        printf("│ MEASURING%*s │\n", DISPLAY_SETTINGS[0]-11, MEASURE_TYPES[measure_type]);
+        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+        printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
+        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "-> Exit");
+        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+        printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-3, "Raw value");
+        printf("│ %-*s │\n", (DISPLAY_SETTINGS[0]/2)-2, "Average value");
+        HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
+        for(int i = 0; i < 10; i++){
+            last_vals[i] = adc1_get_raw(ADC1_CHANNEL_1);
+            if(last_avg != 0){
+                delta_num = (float)last_vals[i] - (float)last_avg;
+                delta_perc = (delta_num/(float)last_avg)*100;
+            }    
+            printf("│ Raw value(%ds): %*d  ", counter, 4, last_vals[i]);
+            printf("Delta last avg: %f  ", delta_num);
+            printf("Delta last avg: %f │\n", delta_perc);
+            vTaskDelay(pdMS_TO_TICKS(freq));
+            counter++;
+        }
+        for(int i = 0; i < 10; i++){
+            last_avg += last_vals[i];
+        }
+        last_avg /= 10;
+
+        HOR_SEP_TABLE_DW(DISPLAY_SETTINGS[0]);
+
+        
+        clear_screen();
+        //vTaskDelay(pdMS_TO_TICKS(settings[0]));
+        //if (wait_enter(freq)==1) break;
+        //clear_screen();
+    }
+
+    // set RED LED STATUS ON -> end of measurement
+    gpio_set_level(GPIO_NUM_11, 1);
+    gpio_set_level(GPIO_NUM_10, 0);
+
+    return;
+}
+
+void measure_old(int GPIO_PIN, int freq){
 
     // set GREEN LED STATUS ON
     gpio_set_level(GPIO_NUM_11, 0);
@@ -309,7 +372,7 @@ void print_measure_type(){
                 if(option == 4) {
                     gpio_set_level(GPIO_NUM_11, 0);
                     gpio_set_level(GPIO_NUM_10, 1);
-                    measure(temp_sensor[option], temp_sensor[2]);
+                    measure(temp_sensor[option], temp_sensor[2], temp_sensor[0]);
                     gpio_set_level(GPIO_NUM_11, 1);
                     gpio_set_level(GPIO_NUM_10, 0);
                 }else if(option == 5){
