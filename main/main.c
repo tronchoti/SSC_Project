@@ -71,22 +71,19 @@ static const char *MEASURE_TYPES[] = {
     "4. Exit"
 };
 
+static uint16_t settings[] =   {100,1000};
+
 static const char *TAG = "example";
 
-int wait_enter(uint8_t prnt_point, uint16_t wait_time){
+int wait_enter(uint16_t wait_time){
     fpurge(stdin); //clears any junk in stdin
     char bufp[10];
     uint16_t counter = 0;
-    while(1){
-        counter++;
-        if(prnt_point == 1){
-            printf(".");
-            
-            if(counter == 10){
-                return 0;
-            }
-        }
-        vTaskDelay(wait_time/100);
+    int timeout = 100000;
+    int rep = (wait_time == 0) ? timeout/100 : wait_time/100;
+
+    for(int i = 0; i < rep; i++){
+        vTaskDelay(pdMS_TO_TICKS(100));
         *bufp = getchar();
         if(*bufp != '\0' && *bufp != 0xFF && *bufp != '\r') //ignores null input, 0xFF, CR in CRLF
         {
@@ -107,26 +104,18 @@ int wait_enter(uint8_t prnt_point, uint16_t wait_time){
                     case 'D': // arrow left
                         return 5;
                     default:
+
                         ;
                 }
             }
         }
-        if(counter == 100){
-            return 0;
-        }
     }
-    return 0;
+    return -1;
 
 }
 
 void clear_screen(){
     printf("\e[1;1H\e[2J");
-}
-
-void print_intro(){
-    HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-    printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "WELCOME TO ESP32 SENSOR MEASUREMENT TOOL");
-    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
 }
 
 void print_sensor_value(int data){
@@ -138,14 +127,16 @@ void print_sensor_value(int data){
 uint8_t print_main_menu(uint8_t option){
     // HOR_SEP_UP;
     while(1){
-        print_intro();
+        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
+        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "WELCOME TO ESP32 SENSOR MEASUREMENT TOOL");
+    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         for(uint8_t i = 1; i<5;i++){
             printf("│ ");
             (option == i) ? printf("%2s","->"): printf("  ");
             printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, MENU_STRING[i-1]);
         }
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0,1000);
+        uint8_t move_temp = wait_enter(0);
         if(move_temp == 1){
             return option;
         }else{
@@ -177,7 +168,7 @@ uint16_t print_settings(uint16_t option){
             printf("%-*s │\n", DISPLAY_SETTINGS[0], SETTINGS_1[i-1]);
         }
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0,1000);
+        uint8_t move_temp = wait_enter(0);
         if(move_temp == 1){
             return option;
         }else{
@@ -197,7 +188,7 @@ uint16_t print_settings(uint16_t option){
     return 1;
 }
 
-void measure(){
+void measure(int GPIO_PIN, int freq){
 
     // set GREEN LED STATUS ON
     gpio_set_level(GPIO_NUM_11, 0);
@@ -222,12 +213,15 @@ void measure(){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "MEASURING");
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s %*d | %-*s %*d │\n", 15, "Raw value:", (int)((float)(DISPLAY_SETTINGS[0]-30)*0.5)-4, m1.raw_value, 15, "Average value:", (int)((float)(DISPLAY_SETTINGS[0]-30)*0.5)-3, m1.average_final);
+        printf("│ %-*s %*d ", 15, "Raw value", (int)((float)(DISPLAY_SETTINGS[0]-30)*0.5)-4, m1.raw_value);
+        printf("│ %-*s %*d │\n", 15, "Average value", (int)((float)(DISPLAY_SETTINGS[0]-30)*0.5)-3, m1.average_final);
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "-> Exit");
-        HOR_SEP_DW(DISPLAY_SETTINGS[0]);
+        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+        printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
+        HOR_SEP_DW(DISPLAY_SETTINGS[0]);    
         //vTaskDelay(pdMS_TO_TICKS(settings[0]));
-        if (wait_enter(0, settings[0])==1) break;
+        if (wait_enter(freq)==1) break;
         clear_screen();
     }
 
@@ -252,7 +246,7 @@ uint16_t measuring_settings(){
         }
         
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0,1000);
+        uint8_t move_temp = wait_enter(0);
         if(move_temp == 1 && option == 3){
             return option;
         }else{
@@ -308,14 +302,14 @@ void print_measure_type(){
         printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, TEST_SETTINGS[5]); 
 
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0,1000);
+        uint8_t move_temp = wait_enter(0);
 
         switch(move_temp){
             case 1:
                 if(option == 4) {
                     gpio_set_level(GPIO_NUM_11, 0);
                     gpio_set_level(GPIO_NUM_10, 1);
-                    measure();
+                    measure(temp_sensor[option], temp_sensor[2]);
                     gpio_set_level(GPIO_NUM_11, 1);
                     gpio_set_level(GPIO_NUM_10, 0);
                 }else if(option == 5){
@@ -392,7 +386,7 @@ uint16_t display_settings() {
         }
         
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0,1000);
+        uint8_t move_temp = wait_enter(0);
         
         if(move_temp == 1 && option == 3) {
             return option;
@@ -432,7 +426,7 @@ void app_main(void){
     // START
     while(1){
         printf("Press enter to start");
-        if(wait_enter(1,1000)==1) break;
+        if(wait_enter(0)==1) break;
         clear_screen();
     }
 
