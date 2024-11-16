@@ -9,6 +9,7 @@
 #include "rom/ets_sys.h"
 #include <string.h>
 #include "driver/pulse_cnt.h"
+#include <math.h>
 
 #define REPEAT_CHAR(ch, count) for(int i = 0; i < (count); i++) printf("%s", ch)
 
@@ -61,8 +62,9 @@ static const char *SETTINGS_2[] = {
 static const char *TEST_SETTINGS[] = {
     "Sensor type", \
     "GPIO pin", \
-    "Refresh rate", \
-    "Verbose mode", \
+    "_____________", \
+    "Test duration", \
+    "Number of samples", \
     "Continue", \
     "Exit"
 };
@@ -74,14 +76,50 @@ static const char *MEASURE_TYPES[] = {
     "4. Exit"
 };
 
+static const char *TEST_LENGTH[] = {
+    "10s",
+    "30s",
+    "60s",
+    "120s",
+    "5min",
+    "10min",
+    "20min",
+    "30min",
+    "1h",
+    "2h",
+    "5h",
+    "10h",
+    "24h",
+    "2d",
+    "5d",
+    "10d"
+};
+static int TEST_LENGTH_VALUES[] = {
+    10,
+    30,
+    60,
+    120,
+    300,
+    600,
+    1200,
+    1800,
+    3600,
+    7200,
+    18000,
+    36000,
+    86400,
+    172800,
+    345600,
+    691200
+};
+
 static uint16_t settings[] =   {100,1000};
 
 static const char *TAG = "example";
 
-int wait_enter(uint16_t wait_time){
+int wait_enter(float wait_time){
     fpurge(stdin); //clears any junk in stdin
     char bufp[10];
-    uint16_t counter = 0;
     int timeout = 100000;
     int rep = (wait_time == 0) ? timeout/100 : wait_time/100;
 
@@ -127,11 +165,11 @@ void print_sensor_value(int data){
     printf("├──────────────────────────────────────────┤\n");
 }
 
-uint8_t print_main_menu(uint8_t option){
+int print_main_menu(int option){
     // HOR_SEP_UP;
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "WELCOME TO ESP32 SENSOR MEASUREMENT TOOL");
+        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "ESP32 SENSOR MEASUREMENT TOOL");
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         for(uint8_t i = 1; i<5;i++){
             printf("│ ");
@@ -165,7 +203,7 @@ uint16_t print_settings(uint16_t option){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0], "SETTINGS");
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        for(uint8_t i = 1; i<=4; i++){
+        for(uint8_t i = 1; i<4; i++){
             printf("│ ");
             (option == i) ? printf("%2s","->"): printf("  ");
             printf("%-*s │\n", DISPLAY_SETTINGS[0], SETTINGS_1[i-1]);
@@ -190,50 +228,54 @@ uint16_t print_settings(uint16_t option){
     }
     return 1;
 }
-void measure(int GPIO_PIN, int freq, int measure_type){
+
+void measure(int GPIO_PIN, float freq, int measure_type, int test_length){
 
     // set GREEN LED STATUS ON
-    gpio_set_level(GPIO_NUM_11, 0);
-    gpio_set_level(GPIO_NUM_10, 1);
+    gpio_set_level(11, 0);
+    gpio_set_level(10, 1);
 
+    int *avg_values = calloc(test_length, sizeof(int));    // AVERAGE VALUES ARRAY
+    
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12); //prints info
     clear_screen();
     int last_avg = 0;
-    int last_vals[10];
-    float delta_num = 0.0;
+    int last_vals[16];
+    int delta_num = 0;
     float delta_perc = 0.0;
-    struct measures m1;
     int counter = 0;
     
-    while(1){
+    for(int i = 0; i < test_length/16; i++){
 
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ MEASURING%*s │\n", DISPLAY_SETTINGS[0]-11, MEASURE_TYPES[measure_type]);
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "-> Exit");
+        printf("│ %-10s %-*.3f │\n",  "Sampling frequency", DISPLAY_SETTINGS[0]-21, freq);
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-3, "Raw value");
-        printf("│ %-*s │\n", (DISPLAY_SETTINGS[0]/2)-2, "Average value");
+        printf("│ %-*s %*d %*c │\n", 14, "Last avg value", 4, last_avg, (DISPLAY_SETTINGS[0]/2)-22, ' ');
         HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
-        for(int i = 0; i < 10; i++){
+        for(int i = 0; i < 16; i++){
             last_vals[i] = adc1_get_raw(ADC1_CHANNEL_1);
             if(last_avg != 0){
-                delta_num = (float)last_vals[i] - (float)last_avg;
+                delta_num = last_vals[i] - last_avg;
                 delta_perc = (delta_num/(float)last_avg)*100;
             }    
-            printf("│ Raw value(%ds): %*d  ", counter, 4, last_vals[i]);
-            printf("Delta last avg: %f  ", delta_num);
-            printf("Delta last avg: %f │\n", delta_perc);
-            vTaskDelay(pdMS_TO_TICKS(freq));
+            printf("│   Raw val(%*d%c): %*d", 3, counter, 's', 4, last_vals[i]); 
+            printf("%*c", DISPLAY_SETTINGS[0]-(21+20), ' ');
+            printf("\u0394: %*d/%6.2f%%   │\n", 5, delta_num, delta_perc);
+            vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
+            //if(wait_enter(freq) == 1) return;
             counter++;
         }
-        for(int i = 0; i < 10; i++){
+        last_avg = 0;
+        for(int i = 0; i < 16; i++){
             last_avg += last_vals[i];
         }
-        last_avg /= 10;
+        last_avg /= 16;
 
         HOR_SEP_TABLE_DW(DISPLAY_SETTINGS[0]);
 
@@ -295,14 +337,14 @@ void measure_old(int GPIO_PIN, int freq){
     return;
 }
 
-uint16_t measuring_settings(){
-    uint16_t option = 1;
+int measuring_settings(){
+    int option = 1;
     
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0], "SETTINGS");
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        for(uint16_t i = 1; i<4; i++){
+        for(int i = 1; i<4; i++){
             printf("│ ");
             (option == i) ? printf("->"): printf("  ");
             (i<3)?printf("%-28s <%7d> │\n", SETTINGS_1[i-1], settings[i-1]) : printf("%-38s │\n", SETTINGS_1[i-1]);
@@ -337,53 +379,46 @@ uint16_t measuring_settings(){
 void print_measure_type(){
 
     uint16_t option = 0;
-    int temp_sensor[] = {0,1,1000,0};
+    int temp_sensor[] = {0,1,1000,0,0b1000000};
 
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        printf("│ ");
-        (option == 0) ? printf("%2s","->"): printf("  ");
-        printf("%-*s%*s │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[0], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-2, SENSORS[temp_sensor[0]]);
-
-        printf("│ ");
-        (option == 1) ? printf("%2s","->"): printf("  ");
-        printf("%-*s%*d │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[1], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-2, temp_sensor[1]);
-
-        printf("│ ");
-        (option == 2) ? printf("%2s","->"): printf("  ");
-        printf("%-*s%*d │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[2], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-2, temp_sensor[2]);
-
-        printf("│ ");
-        (option == 3) ? printf("%2s","->"): printf("  ");
-        printf("%-*s%*d │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[3], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-2, temp_sensor[3]);
-
-        printf("│ ");
-        (option == 4) ? printf("%2s","->"): printf("  ");
-        printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, TEST_SETTINGS[4]); 
-        printf("│ ");
-        (option == 5) ? printf("%2s","->"): printf("  ");
-        printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, TEST_SETTINGS[5]); 
+        for(int i = 0; i < 7; i++) {
+            printf("│ ");
+            (option == i) ? printf("%2s","->"): printf("  ");
+            if(i < 5) {
+                if(i == 0) {
+                    printf("%-*s<%*s> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[i], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-4, SENSORS[temp_sensor[i]]);
+                } else if (i == 3) {
+                    printf("%-*s<%*s> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[i], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-4, TEST_LENGTH[temp_sensor[i]]);
+                } else {
+                    printf("%-*s<%*d> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[i], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-4, temp_sensor[i]);
+                }
+            } else {
+                printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, TEST_SETTINGS[i]);
+            }
+        }
 
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
         uint8_t move_temp = wait_enter(0);
-
+        float freq = (float)TEST_LENGTH_VALUES[temp_sensor[3]]/temp_sensor[4];
         switch(move_temp){
             case 1:
-                if(option == 4) {
+                if(option == 5) {
                     gpio_set_level(GPIO_NUM_11, 0);
                     gpio_set_level(GPIO_NUM_10, 1);
-                    measure(temp_sensor[option], temp_sensor[2], temp_sensor[0]);
+                    measure(temp_sensor[option], freq, temp_sensor[0], temp_sensor[4]);   // start measuring
                     gpio_set_level(GPIO_NUM_11, 1);
                     gpio_set_level(GPIO_NUM_10, 0);
-                }else if(option == 5){
-                    return;
+                }else if(option == 6){
+                    return;  // exit    
                 }   
                 break;
             case 2:
                 if(option != 0) option--;
                 break;
             case 3:
-                if(option != 5) option++;
+                if(option != 6) option++;
                 break;
             case 4:
                 if(option == 0 && temp_sensor[option] < 2){
@@ -392,8 +427,10 @@ void print_measure_type(){
                     temp_sensor[option]++;
                 }else if(option == 2 && temp_sensor[option] < 5000){
                     temp_sensor[option]+=100;
-                }else if(option == 3 && temp_sensor[option] == 0){
-                    temp_sensor[option] = 1;
+                }else if(option == 3 && temp_sensor[option] < 15){
+                    temp_sensor[option]++;
+                }else if(option == 4 && temp_sensor[option] < 0b1000000000000){
+                    temp_sensor[option]<<= 1;  
                 }
                 break;
             case 5:
@@ -403,8 +440,10 @@ void print_measure_type(){
                     temp_sensor[option]--;
                 }else if(option == 2 && temp_sensor[option] > 100){
                     temp_sensor[option]-=100;
-                }else if(option == 3 && temp_sensor[option] == 1){
-                    temp_sensor[option] = 0;
+                }else if(option == 3 && temp_sensor[option] > 0){
+                    temp_sensor[option]--;
+                }else if(option == 4 && temp_sensor[option] > 0b10000){
+                    temp_sensor[option]>>= 1;  
                 }
                 break;
         }
@@ -433,15 +472,15 @@ void setup_status_led(){
     }
 }
 
-uint16_t display_settings() {
-    uint16_t option = 1;
+int display_settings() {
+    int option = 1;
     
     while(1) {
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "DISPLAY SETTINGS");
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         
-        for(uint16_t i = 1; i<4; i++) {
+        for(int i = 1; i<4; i++) {
             printf("│ ");
             (option == i) ? printf("->"): printf("  ");
             (i<3) ? printf("%-*s <%*d> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.8f)-3, SETTINGS_2[i-1], (int)((float)DISPLAY_SETTINGS[0]*0.2f)-4, DISPLAY_SETTINGS[i-1]) 
@@ -466,14 +505,14 @@ uint16_t display_settings() {
             }
             if(move_temp == 4) {
                 if(option == 1 && DISPLAY_SETTINGS[option-1] < 120) {
-                    DISPLAY_SETTINGS[option-1] += 10;
+                    DISPLAY_SETTINGS[option-1] += 20;
                 } else if(option == 2 && DISPLAY_SETTINGS[option-1] < 40) {
                     DISPLAY_SETTINGS[option-1]++;
                 }
             }
             if(move_temp == 5) {
-                if(option == 1 && DISPLAY_SETTINGS[option-1] > 50) {
-                    DISPLAY_SETTINGS[option-1] -= 10;
+                if(option == 1 && DISPLAY_SETTINGS[option-1] > 60) {
+                    DISPLAY_SETTINGS[option-1] -= 20;
                 } else if(option == 2 && DISPLAY_SETTINGS[option-1] > 10) {
                     DISPLAY_SETTINGS[option-1]--;
                 }
