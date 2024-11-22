@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "sdkconfig.h"
@@ -8,8 +9,13 @@
 #include "esp_adc_cal.h"
 #include "rom/ets_sys.h"
 #include <string.h>
-#include "driver/pulse_cnt.h"
+#include "driver/timer.h"
 #include <math.h>
+#include "hal/timer_hal.h"
+#include "esp_intr_types.h"
+#include "constants.h"
+#include "sensors.h"
+
 
 #define REPEAT_CHAR(ch, count) for(int i = 0; i < (count); i++) printf("%s", ch)
 
@@ -25,93 +31,24 @@
 //#define HOR_SEP_MID(width)   printf("├%-*c┤\n", width, 196)
 //#define HOR_SEP_DW(width)    printf("└%-*c┘\n", width, 196)
 
-struct measures{
-    uint16_t raw_value;
-    uint16_t average;
-    uint16_t average_final; 
-    uint16_t last_values[10];
-};
 
-static uint16_t DISPLAY_SETTINGS[] = {80, 24}; // console_width, console_height
 
-static const char *SENSORS[] = {
-    "Ultrasonic ranging",
-    "Temperature sensor",
-    "Light sensor"
-};
+typedef struct {
+    int timer_group;
+    int timer_idx;
+    int alarm_interval;
+    bool auto_reload;
+} example_timer_info_t;
 
-static const char *MENU_STRING[] = {
-    "1. Start measuring ",\
-    "2. Settings        ",\
-    "3. Display settings",\
-    "4. Exit"
-};
+/**
+ * @brief A sample structure to pass events from the timer ISR to task
+ *
+ */
+typedef struct {
+    example_timer_info_t info;
+    uint64_t timer_counter_value;
+} example_timer_event_t;
 
-static const char *SETTINGS_1[] = {
-    "1. Update frequency",\
-    "2. Average buffer size",\
-    "3. Exit"
-};
-
-static const char *SETTINGS_2[] = {
-    "1. Console width",\
-    "2. Console height",\
-    "3. Exit"
-};
-
-static const char *TEST_SETTINGS[] = {
-    "Sensor type", \
-    "GPIO pin", \
-    "_____________", \
-    "Test duration", \
-    "Number of samples", \
-    "Continue", \
-    "Exit"
-};
-
-static const char *MEASURE_TYPES[] = {
-    "1. Ultrasonic ranging module",\
-    "2. Temperature sensor", \
-    "3. Ligth sensor",\
-    "4. Exit"
-};
-
-static const char *TEST_LENGTH[] = {
-    "10s",
-    "30s",
-    "60s",
-    "120s",
-    "5min",
-    "10min",
-    "20min",
-    "30min",
-    "1h",
-    "2h",
-    "5h",
-    "10h",
-    "24h",
-    "2d",
-    "5d",
-    "10d"
-};
-static int TEST_LENGTH_VALUES[] = {
-    10,
-    30,
-    60,
-    120,
-    300,
-    600,
-    1200,
-    1800,
-    3600,
-    7200,
-    18000,
-    36000,
-    86400,
-    172800,
-    345600,
-    691200
-};
 
 static uint16_t settings[] =   {100,1000};
 
@@ -155,14 +92,17 @@ int wait_enter(float wait_time){
 
 }
 
+/*
+    Clears the screen by moving the cursor to the top left corner
+    and then clearing the screen.
+
+    \e[1;1H moves the cursor to the top left corner
+        - ESC[{line};{column}H
+    \e[2J erases the screen
+        - ESC[2J
+*/
 void clear_screen(){
     printf("\e[1;1H\e[2J");
-}
-
-void print_sensor_value(int data){
-    printf("┌──────────────────────────────────────────┐\n");
-    printf("│ Sensor value: %7d                        │\n", data);
-    printf("├──────────────────────────────────────────┤\n");
 }
 
 int print_main_menu(int option){
@@ -229,113 +169,23 @@ uint16_t print_settings(uint16_t option){
     return 1;
 }
 
-void measure(int GPIO_PIN, float freq, int measure_type, int test_length){
+void print_summary(int *avg_values, int test_length){
+    HOR_SEP_UP(DISPLAY_SETTINGS[0]);
+    printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SUMMARY");
+    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
 
-    // set GREEN LED STATUS ON
-    gpio_set_level(11, 0);
-    gpio_set_level(10, 1);
+    printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "-> Exit");
+    HOR_SEP_DW(DISPLAY_SETTINGS[0]);
 
-    int *avg_values = calloc(test_length, sizeof(int));    // AVERAGE VALUES ARRAY
-    
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12); //prints info
-    clear_screen();
-    int last_avg = 0;
-    int last_vals[16];
-    int delta_num = 0;
-    float delta_perc = 0.0;
-    int counter = 0;
-    
-    for(int i = 0; i < test_length/16; i++){
-
-        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        printf("│ MEASURING%*s │\n", DISPLAY_SETTINGS[0]-11, MEASURE_TYPES[measure_type]);
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-10s %-*.3f │\n",  "Sampling frequency", DISPLAY_SETTINGS[0]-21, freq);
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-3, "Raw value");
-        printf("│ %-*s %*d %*c │\n", 14, "Last avg value", 4, last_avg, (DISPLAY_SETTINGS[0]/2)-22, ' ');
-        HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
-        for(int i = 0; i < 16; i++){
-            last_vals[i] = adc1_get_raw(ADC1_CHANNEL_1);
-            if(last_avg != 0){
-                delta_num = last_vals[i] - last_avg;
-                delta_perc = (delta_num/(float)last_avg)*100;
-            }    
-            printf("│   Raw val(%*d%c): %*d", 3, counter, 's', 4, last_vals[i]); 
-            printf("%*c", DISPLAY_SETTINGS[0]-(21+20), ' ');
-            printf("\u0394: %*d/%6.2f%%   │\n", 5, delta_num, delta_perc);
-            vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
-            //if(wait_enter(freq) == 1) return;
-            counter++;
-        }
-        last_avg = 0;
-        for(int i = 0; i < 16; i++){
-            last_avg += last_vals[i];
-        }
-        last_avg /= 16;
-
-        HOR_SEP_TABLE_DW(DISPLAY_SETTINGS[0]);
-
-        
-        clear_screen();
-        //vTaskDelay(pdMS_TO_TICKS(settings[0]));
-        //if (wait_enter(freq)==1) break;
-        //clear_screen();
-    }
-
-    // set RED LED STATUS ON -> end of measurement
-    gpio_set_level(GPIO_NUM_11, 1);
-    gpio_set_level(GPIO_NUM_10, 0);
-
-    return;
+    if(wait_enter(0) == 1) return;
 }
 
-void measure_old(int GPIO_PIN, int freq){
-
-    // set GREEN LED STATUS ON
-    gpio_set_level(GPIO_NUM_11, 0);
-    gpio_set_level(GPIO_NUM_10, 1);
-
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12); //prints info
-    clear_screen();
-    
-    struct measures m1;
-    uint16_t counter = 0;
-    while(1){
-        m1.raw_value = adc1_get_raw(ADC1_CHANNEL_1);
-        m1.last_values[counter++] = m1.raw_value;
-        m1.average += m1.raw_value;
-        if(counter == 10){
-            m1.average_final = m1.average/10;
-            m1.average = 0;
-            counter = 0;
-        }
-
-        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "MEASURING");
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s %*d ", 15, "Raw value", (int)((float)(DISPLAY_SETTINGS[0]-30)*0.5)-4, m1.raw_value);
-        printf("│ %-*s %*d │\n", 15, "Average value", (int)((float)(DISPLAY_SETTINGS[0]-30)*0.5)-3, m1.average_final);
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "-> Exit");
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
-        HOR_SEP_DW(DISPLAY_SETTINGS[0]);    
-        //vTaskDelay(pdMS_TO_TICKS(settings[0]));
-        if (wait_enter(freq)==1) break;
-        clear_screen();
-    }
-
-    // set RED LED STATUS ON -> end of measurement
-    gpio_set_level(GPIO_NUM_11, 1);
-    gpio_set_level(GPIO_NUM_10, 0);
-
-    return;
+static void IRAM_ATTR get_timer_value(){
+    timer_pause(0,0);
+    printf("timer value: %lld\n", timer_group_get_counter_value_in_isr(0,0));
+    //return timer_group_get_counter_value_in_isr(0,0);
 }
+
 
 int measuring_settings(){
     int option = 1;
@@ -407,7 +257,17 @@ void print_measure_type(){
                 if(option == 5) {
                     gpio_set_level(GPIO_NUM_11, 0);
                     gpio_set_level(GPIO_NUM_10, 1);
-                    measure(temp_sensor[option], freq, temp_sensor[0], temp_sensor[4]);   // start measuring
+                    switch(temp_sensor[0]){
+                        case 0:
+                            ultrasonic();
+                            break;
+                        case 1:
+                            temperature(temp_sensor[1], freq, temp_sensor[4]);
+                            break;
+                        case 2:
+                            //measure_old(temp_sensor[2], freq, temp_sensor[0], temp_sensor[4]);
+                            break;
+                    }   
                     gpio_set_level(GPIO_NUM_11, 1);
                     gpio_set_level(GPIO_NUM_10, 0);
                 }else if(option == 6){
@@ -567,47 +427,6 @@ void app_main(void){
 
     clear_screen();
 
-    // set GPIO pin 11 to OUTPUT mode;
-    // check for errors and inform in case
-    esp_err_t dir_11 = gpio_set_direction(GPIO_NUM_11, GPIO_MODE_OUTPUT);
-    if (dir_11 == ESP_ERR_INVALID_ARG){
-        ESP_LOGE(TAG, "Invalid GPIO pin: output mode");
-        printf("Invalid GPIO pin: output mode\n");
-    }
-    
-    // set GPIO pin 10 to INPUT mode;
-    // check for errors and inform in case
-    esp_err_t dir_10 = gpio_set_direction(GPIO_NUM_10, GPIO_MODE_INPUT);
-    if (dir_10 == ESP_ERR_INVALID_ARG){
-        ESP_LOGE(TAG, "Invalid GPIO pin: output mode");
-    }
-    
-    //ESP_LOGI(TAG, "Raw value %d", raw_value);
-    // printf("%d\n", raw_value);
-    while(1){
-        int raw_value = adc1_get_raw(ADC1_CHANNEL_1);
-        
-        
-        if (gpio_get_level(GPIO_NUM_10) == 1){
-            // set GPIO pin 10 to level high;
-            // check for errors and inform in case
-            //ESP_LOGI(TAG, "Output pin 10: on");
-            //esp_err_t pin_11_out = 
-            print_sensor_value(1);
-            gpio_set_level(GPIO_NUM_11, 1);
-            // if (pin_11_out == ESP_ERR_INVALID_ARG){
-            //     ESP_LOGE(TAG, "Invalid GPIO pin: level");
-            // }
-        }else{
-            gpio_set_level(GPIO_NUM_11, 0);
-            //ESP_LOGI(TAG, "Output pin 11: off");
-            print_sensor_value(0);
-        }
-        print_sensor_value(raw_value);
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        clear_screen();
-    }
-    
 
     
 }
