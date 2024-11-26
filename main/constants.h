@@ -11,5 +11,7 @@ extern const char *TEST_LENGTH[];
 extern const int TEST_LENGTH_VALUES[];
 extern uint16_t DISPLAY_SETTINGS[];
 
+int wait_enter(float wait_time);
+
 #endif
 

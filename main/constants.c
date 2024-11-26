@@ -1,4 +1,12 @@
+#include <stdio.h>
 #include <stdint.h>
+#include <string.h>
+#include "dht.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "driver/gpio.h"
 
 /* SENSORS
     Array with name of the sensors that are programmed
@@ -6,7 +14,7 @@
 */
 const char *SENSORS[] = {
     "Ultrasonic ranging",
-    "Temperature sensor",
+    "DHT11",
     "Light sensor"
 };
 
@@ -47,18 +55,6 @@ const char *TEST_SETTINGS[] = {
     "Start", \
     "Serial mode", \
     "Exit"
-};
-
-/*  MEASURE TYPES
-    Array with the options of the measure types.
-    These are the arrays displayed in the header of the console
-    when a measure is being taken.
-*/
-const char *MEASURE_TYPES[] = {
-    "1. Ultrasonic ranging module",\
-    "2. Temperature & Humidity", \
-    "3. Ligth sensor",\
-    "4. Exit"
 };
 
 /*  TEST LENGTH
@@ -109,3 +105,4 @@ const int TEST_LENGTH_VALUES[] = {
 };
 
 uint16_t DISPLAY_SETTINGS[] = {80, 24}; // console_width, console_height
+
