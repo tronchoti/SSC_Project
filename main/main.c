@@ -232,11 +232,35 @@ void in_test(int GPIO_PIN, float freq, int type, int samples){
 /* PRINT SUMMARY
     Prints the summary menu and waits for user input.
 */
-void print_summary(int16_t *avg_values, int test_length){
+void print_summary(int test_length, float *temp, float *hum){
     HOR_SEP_UP(DISPLAY_SETTINGS[0]);
     printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SUMMARY");
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);
 
+    // CALCULATE AVERAGE AND MAX AND MIN
+    float avg_temp = 0;
+    float avg_hum = 0;
+    float max_temp = temp[0];
+    float min_temp = temp[0];
+    float max_hum = hum[0];
+    float min_hum = hum[0];
+    for(int i = 0; i < test_length; i++){
+        avg_temp += temp[i];
+        avg_hum += hum[i];
+        if(temp[i] > max_temp) max_temp = temp[i];
+        if(temp[i] < min_temp) min_temp = temp[i];
+        if(hum[i] > max_hum) max_hum = hum[i];
+        if(hum[i] < min_hum) min_hum = hum[i];
+    }
+    avg_temp /= test_length;
+    avg_hum /= test_length;
+
+    printf("│ %-*s %*c %-*.1f │\n", 15, "Average temp", 4, ' ', DISPLAY_SETTINGS[0]-23,avg_temp);
+    printf("│ %-*s %*c %-*.1f │\n", 15, "Average hum", 4, ' ', DISPLAY_SETTINGS[0]-23, avg_hum);
+    printf("│ %-*s %*c %-*.1f │\n", 15, "Max temp", 4, ' ', DISPLAY_SETTINGS[0]-23, max_temp);
+    printf("│ %-*s %*c %-*.1f │\n", 15, "Min temp", 4, ' ', DISPLAY_SETTINGS[0]-23, min_temp);
+    printf("│ %-*s %*c %-*.1f │\n", 15, "Max hum", 4, ' ', DISPLAY_SETTINGS[0]-23, max_hum);
+    printf("│ %-*s %*c %-*.1f │\n", 15, "Min hum", 4, ' ', DISPLAY_SETTINGS[0]-23, min_hum);
     printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "-> Exit");
     HOR_SEP_DW(DISPLAY_SETTINGS[0]);
 
@@ -304,7 +328,8 @@ void print_measure_type(){
             }
         }
 
-        float values[temp_sensor[3]];
+        float temp[temp_sensor[3]];
+        float hum[temp_sensor[3]];
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
         uint8_t move_temp = wait_enter(0);
         float freq = (float)TEST_LENGTH_VALUES[temp_sensor[2]]/temp_sensor[3];
@@ -317,10 +342,12 @@ void print_measure_type(){
                             ultrasonic();
                             break;
                         case 1:
-                            temperature_humidity(temp_sensor[1], freq, temp_sensor[3], values);
+                            
+                            temperature_humidity(temp_sensor[1], freq, temp_sensor[3], temp, hum);
+                            print_summary(temp_sensor[3], temp, hum);
                             break;
                         case 2:
-                            light();//measure_old(temp_sensor[2], freq, temp_sensor[0], temp_sensor[4]);
+                            //light();//measure_old(temp_sensor[2], freq, temp_sensor[0], temp_sensor[4]);
                             break;
                     }   
                     //print_summary(values, temp_sensor[4]);
