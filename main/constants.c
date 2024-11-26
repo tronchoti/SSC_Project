@@ -15,9 +15,8 @@ const char *SENSORS[] = {
 */
 const char *MENU_STRING[] = {
     "1. Start measuring ",\
-    "2. Settings        ",\
-    "3. Display settings",\
-    "4. Exit"
+    "2. Display settings",\
+    "3. Exit"
 };
 
 /*
@@ -43,10 +42,10 @@ const char *SETTINGS_2[] = {
 const char *TEST_SETTINGS[] = {
     "Sensor type", \
     "GPIO pin", \
-    "_____________", \
     "Test duration", \
     "Number of samples", \
-    "Continue", \
+    "Start", \
+    "Serial mode", \
     "Exit"
 };
 
@@ -57,7 +56,7 @@ const char *TEST_SETTINGS[] = {
 */
 const char *MEASURE_TYPES[] = {
     "1. Ultrasonic ranging module",\
-    "2. Temperature sensor", \
+    "2. Temperature & Humidity", \
     "3. Ligth sensor",\
     "4. Exit"
 };

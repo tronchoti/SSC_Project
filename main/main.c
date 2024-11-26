@@ -16,6 +16,8 @@
 #include "constants.h"
 #include "sensors.h"
 
+#include "onewire.h"
+#include "dht.h"
 
 #define REPEAT_CHAR(ch, count) for(int i = 0; i < (count); i++) printf("%s", ch)
 
@@ -26,38 +28,25 @@
 #define HOR_SEP_TABLE_MID(width) printf("├"); REPEAT_CHAR("─", (width/2)-1); printf("┼"); REPEAT_CHAR("─", (width/2)); printf("┤\n");
 #define HOR_SEP_TABLE_DW(width) printf("└"); REPEAT_CHAR("─", (width/2)-1); printf("┴"); REPEAT_CHAR("─", (width/2)); printf("┘\n");
 
+#define CLEAR_SCREEN printf("\e[1;1H\e[2J");
 // Doesn't work for some reason
 //#define HOR_SEP_UP(width)    printf("┌%-*c┐\n", width, 126)
 //#define HOR_SEP_MID(width)   printf("├%-*c┤\n", width, 196)
 //#define HOR_SEP_DW(width)    printf("└%-*c┘\n", width, 196)
 
-
-
-typedef struct {
-    int timer_group;
-    int timer_idx;
-    int alarm_interval;
-    bool auto_reload;
-} example_timer_info_t;
-
-/**
- * @brief A sample structure to pass events from the timer ISR to task
- *
- */
-typedef struct {
-    example_timer_info_t info;
-    uint64_t timer_counter_value;
-} example_timer_event_t;
-
-
-static uint16_t settings[] =   {100,1000};
+uint16_t settings[] =   {100,1000};
 
 static const char *TAG = "example";
 
+/* WAIT ENTER
+    Waits for user input.
+    If wait_time is 0, it waits for timeout/100 iterations.
+    Otherwise, it waits for wait_time/100 iterations.
+*/
 int wait_enter(float wait_time){
     fpurge(stdin); //clears any junk in stdin
     char bufp[10];
-    int timeout = 100000;
+    int timeout = 100000;   // 100s timeout 
     int rep = (wait_time == 0) ? timeout/100 : wait_time/100;
 
     for(int i = 0; i < rep; i++){
@@ -82,36 +71,24 @@ int wait_enter(float wait_time){
                     case 'D': // arrow left
                         return 5;
                     default:
-
                         ;
                 }
             }
         }
     }
     return -1;
-
 }
 
-/*
-    Clears the screen by moving the cursor to the top left corner
-    and then clearing the screen.
-
-    \e[1;1H moves the cursor to the top left corner
-        - ESC[{line};{column}H
-    \e[2J erases the screen
-        - ESC[2J
+/* PRINT MAIN MENU
+    Prints the main menu and waits for user input.
+    The options can be found in constants.h as MENU_STRING.
 */
-void clear_screen(){
-    printf("\e[1;1H\e[2J");
-}
-
 int print_main_menu(int option){
-    // HOR_SEP_UP;
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "ESP32 SENSOR MEASUREMENT TOOL");
-    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        for(uint8_t i = 1; i<5;i++){
+        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+        for(uint8_t i = 1; i<4;i++){
             printf("│ ");
             (option == i) ? printf("%2s","->"): printf("  ");
             printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, MENU_STRING[i-1]);
@@ -132,18 +109,22 @@ int print_main_menu(int option){
                 }
             }
         }
-        clear_screen();
+        CLEAR_SCREEN;
     }
     return 1;
 }
 
+/* PRINT SETTINGS
+    Prints the settings menu and waits for user input.
+    The options can be found in constants.h as SETTINGS_1.
+*/
 uint16_t print_settings(uint16_t option){
     
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         printf("│ %-*s │\n", DISPLAY_SETTINGS[0], "SETTINGS");
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        for(uint8_t i = 1; i<4; i++){
+        for(uint8_t i = 1; i<3; i++){
             printf("│ ");
             (option == i) ? printf("%2s","->"): printf("  ");
             printf("%-*s │\n", DISPLAY_SETTINGS[0], SETTINGS_1[i-1]);
@@ -164,12 +145,94 @@ uint16_t print_settings(uint16_t option){
                 }
             }
         }
-        clear_screen();
+        CLEAR_SCREEN;
     }
     return 1;
 }
 
-void print_summary(int *avg_values, int test_length){
+/* PRINT HEADER IN TEST
+    Prints the header of the in_test function.
+    It will show the sensor type, the sampling frequency and the last average value.
+*/
+void print_header_in_test(int type, float freq, int last_avg){
+    HOR_SEP_UP(DISPLAY_SETTINGS[0]);
+    printf("│ MEASURING%*s │\n", DISPLAY_SETTINGS[0]-11, MEASURE_TYPES[type]);
+    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+    printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
+    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+    printf("│ %-10s %-*.3f │\n",  "Sampling frequency", DISPLAY_SETTINGS[0]-21, freq);
+    HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+    printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-3, "Raw value");
+    printf("│ %-*s %*d %*c │\n", 14, "Last avg value", 4, last_avg, (DISPLAY_SETTINGS[0]/2)-22, ' ');
+    HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
+}
+
+/* IN_TEST
+    Measures the sensor in a loop for a given number of samples.
+    Prints the raw value, its delta to the last average value and the percentage of delta.
+
+    The main point of this function is to generalize the measurement process, with only
+    changing in some sensors, where special measure processes are needed.
+    Before this function, each sensor had its own function, but now it's not necessary.
+*/
+void in_test(int GPIO_PIN, float freq, int type, int samples){
+
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_1, ADC_ATTEN_DB_12);
+    
+    CLEAR_SCREEN;
+    int avg_values[samples];
+    int last_avg = 0;           // LAST AVERAGE VALUE
+    int last_vals[16];          // LAST VALUES ARRAY
+    int delta_num = 0;          // DELTA NUMBER
+    float delta_perc = 0.0;     // DELTA PERCENTAGE
+    int counter = 0;            // COUNTER
+
+    int temperature = 0;
+    int humidity = 0;
+
+    for(int i = 0; i < samples/16; i++){
+        print_header_in_test(type, freq, last_avg);
+        
+        // print values in same page, up to 16 values
+        for(int i = 0; i < 16; i++){
+            //dht_read_data(DHT_TYPE_DHT11, GPIO_NUM_22, &temperature, &humidity);
+            printf("Temperature: %d\n", temperature);
+            printf("Humidity: %d\n", humidity);
+            avg_values[i] = last_vals[i] = adc1_get_raw(ADC1_CHANNEL_1);
+            if(last_avg != 0){
+            delta_num = last_vals[i] - last_avg;
+                delta_perc = (delta_num/(float)last_avg)*100;
+            }
+            
+            // print raw value, it's delta to the last average value and the percentage of delta
+            printf("│   Raw val(%*d): %*d", 3, counter, 4, last_vals[i]); 
+            printf("%*c", DISPLAY_SETTINGS[0]-(20+20), ' ');
+            printf("\u0394: %*d/%6.2f%%   │\n", 5, delta_num, delta_perc);
+            // I should fix this hardcoded print above
+
+            // delay between samples
+            vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
+
+            counter++;
+        }
+        // calculate the last average value
+        last_avg = 0;   
+        for(int i = 0; i < 16; i++){
+            last_avg += last_vals[i];
+        }
+        last_avg /= 16;
+
+        HOR_SEP_TABLE_DW(DISPLAY_SETTINGS[0]);
+
+        CLEAR_SCREEN;
+    }
+}
+
+/* PRINT SUMMARY
+    Prints the summary menu and waits for user input.
+*/
+void print_summary(int16_t *avg_values, int test_length){
     HOR_SEP_UP(DISPLAY_SETTINGS[0]);
     printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SUMMARY");
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);
@@ -180,66 +243,58 @@ void print_summary(int *avg_values, int test_length){
     if(wait_enter(0) == 1) return;
 }
 
-static void IRAM_ATTR get_timer_value(){
-    timer_pause(0,0);
-    printf("timer value: %lld\n", timer_group_get_counter_value_in_isr(0,0));
-    //return timer_group_get_counter_value_in_isr(0,0);
-}
+/* SERIAL MODE
+    Measures the sensor in a loop for a given number of samples.
+    Prints the raw value in a serial format.
 
+    The format is:
+    \start
+    <raw value>
+    <raw value>
+    ...
+    \end
 
-int measuring_settings(){
-    int option = 1;
-    
-    while(1){
-        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s │\n", DISPLAY_SETTINGS[0], "SETTINGS");
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        for(int i = 1; i<4; i++){
-            printf("│ ");
-            (option == i) ? printf("->"): printf("  ");
-            (i<3)?printf("%-28s <%7d> │\n", SETTINGS_1[i-1], settings[i-1]) : printf("%-38s │\n", SETTINGS_1[i-1]);
-        }
-        
-        HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0);
-        if(move_temp == 1 && option == 3){
-            return option;
-        }else{
-            if(move_temp == 2){
-                if(option != 1){
-                    option--;
-                }
-            }
-            if(move_temp == 3){
-                if(option != 3){
-                    option++;
-                }
-            }
-            if(move_temp == 4){
-                settings[option-1]+=100;
-            }
-            if(move_temp == 5){
-                settings[option-1]--;
-            }
-        }
-        clear_screen();
+    This function is intended to be used when the user wants to later process the data
+    in other software, like Matlab, Python, etc.
+
+    By using Screen utility in Linux, with the parameter -L, the user can interact 
+    as the same time that all the output is stored in a file
+*/
+void serial_mode(int type, float freq, int samples){
+    print_header_in_test(type, freq, 0);
+    printf("\\start\n");
+    for(int i = 0; i < samples; i++){
+        printf("%d\n", adc1_get_raw(ADC1_CHANNEL_1));
+        vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
     }
+    printf("\\end");
+    wait_enter(0);
 }
 
+/* PRINT MEASURE TYPE
+    Prints the measure type menu and waits for user input.
+    The options can be found in constants.c as TEST_SETTINGS.
+*/
 void print_measure_type(){
 
     uint16_t option = 0;
-    int temp_sensor[] = {0,1,1000,0,0b1000000};
+    /*
+        0 -> sensor type
+        1 -> GPIO pin
+        2 -> test duration
+        3 -> number of samples
+    */
+    int temp_sensor[] = {0,1,0,0b1000000};
 
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
         for(int i = 0; i < 7; i++) {
             printf("│ ");
             (option == i) ? printf("%2s","->"): printf("  ");
-            if(i < 5) {
+            if(i < 4) {
                 if(i == 0) {
                     printf("%-*s<%*s> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[i], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-4, SENSORS[temp_sensor[i]]);
-                } else if (i == 3) {
+                } else if (i == 2) {
                     printf("%-*s<%*s> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[i], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-4, TEST_LENGTH[temp_sensor[i]]);
                 } else {
                     printf("%-*s<%*d> │\n", (int)((float)DISPLAY_SETTINGS[0]*0.6f)-2, TEST_SETTINGS[i], (int)((float)DISPLAY_SETTINGS[0]*0.4f)-4, temp_sensor[i]);
@@ -249,29 +304,30 @@ void print_measure_type(){
             }
         }
 
+        int16_t values[temp_sensor[3]];
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
         uint8_t move_temp = wait_enter(0);
-        float freq = (float)TEST_LENGTH_VALUES[temp_sensor[3]]/temp_sensor[4];
+        float freq = (float)TEST_LENGTH_VALUES[temp_sensor[2]]/temp_sensor[3];
         switch(move_temp){
             case 1:
-                if(option == 5) {
-                    gpio_set_level(GPIO_NUM_11, 0);
-                    gpio_set_level(GPIO_NUM_10, 1);
+                if(option == 4) {
+                    int16_t values[temp_sensor[4]];
                     switch(temp_sensor[0]){
                         case 0:
                             ultrasonic();
                             break;
                         case 1:
-                            temperature(temp_sensor[1], freq, temp_sensor[4]);
+                            temperature_humidity(temp_sensor[1], freq, temp_sensor[3], values);
                             break;
                         case 2:
-                            //measure_old(temp_sensor[2], freq, temp_sensor[0], temp_sensor[4]);
+                            light();//measure_old(temp_sensor[2], freq, temp_sensor[0], temp_sensor[4]);
                             break;
                     }   
-                    gpio_set_level(GPIO_NUM_11, 1);
-                    gpio_set_level(GPIO_NUM_10, 0);
+                    //print_summary(values, temp_sensor[4]);
+                }else if(option == 5){
+                    serial_mode(temp_sensor[0], freq, temp_sensor[4]);
                 }else if(option == 6){
-                    return;  // exit    
+                    return;  // exit    SETTINGS_1
                 }   
                 break;
             case 2:
@@ -285,11 +341,9 @@ void print_measure_type(){
                     temp_sensor[option]++;
                 }else if(option == 1 && temp_sensor[option] < 32){
                     temp_sensor[option]++;
-                }else if(option == 2 && temp_sensor[option] < 5000){
-                    temp_sensor[option]+=100;
-                }else if(option == 3 && temp_sensor[option] < 15){
+                }else if(option == 2 && temp_sensor[option] < 15){
                     temp_sensor[option]++;
-                }else if(option == 4 && temp_sensor[option] < 0b1000000000000){
+                }else if(option == 3 && temp_sensor[option] < 0b1000000000000){
                     temp_sensor[option]<<= 1;  
                 }
                 break;
@@ -298,40 +352,22 @@ void print_measure_type(){
                     temp_sensor[option]--;
                 }else if(option == 1 && temp_sensor[option] > 1){
                     temp_sensor[option]--;
-                }else if(option == 2 && temp_sensor[option] > 100){
-                    temp_sensor[option]-=100;
-                }else if(option == 3 && temp_sensor[option] > 0){
+                }else if(option == 2 && temp_sensor[option] > 0){
                     temp_sensor[option]--;
-                }else if(option == 4 && temp_sensor[option] > 0b10000){
+                }else if(option == 3 && temp_sensor[option] > 0b10000){
                     temp_sensor[option]>>= 1;  
                 }
                 break;
         }
-        clear_screen();
+        CLEAR_SCREEN;
     }
     return;
 }
 
-void setup_status_led(){
-
-    // RED STATUS LED
-    // set GPIO pin 11 to OUTPUT mode;
-    // check for errors and inform in case
-    esp_err_t dir_11 = gpio_set_direction(GPIO_NUM_11, GPIO_MODE_OUTPUT);
-    if (dir_11 == ESP_ERR_INVALID_ARG){
-        ESP_LOGE(TAG, "Invalid GPIO pin: output mode");
-        printf("Invalid GPIO pin: output mode\n");
-    }
-
-    // GREEN STATUS LED
-    // set GPIO pin 10 to OUTPUT mode;
-    // check for errors and inform in case
-    esp_err_t dir_10 = gpio_set_direction(GPIO_NUM_10, GPIO_MODE_OUTPUT);
-    if (dir_10 == ESP_ERR_INVALID_ARG){
-        ESP_LOGE(TAG, "Invalid GPIO pin: output mode");
-    }
-}
-
+/* DISPLAY SETTINGS
+    Prints the display settings menu.
+    The options can be found in constants.h as SETTINGS_2.
+*/
 int display_settings() {
     int option = 1;
     
@@ -378,55 +414,47 @@ int display_settings() {
                 }
             }
         }
-        clear_screen();
+        CLEAR_SCREEN;
     }
     return 1;
 }
 
+/* APP MAIN
+    Main function of the program.
+    It will start the program and wait for user input to start the measurement.
+*/
 void app_main(void){
     
     // START
     while(1){
         printf("Press enter to start");
         if(wait_enter(0)==1) break;
-        clear_screen();
+        CLEAR_SCREEN;
     }
 
     // SETUP STATUS LED
-    setup_status_led();
+    //setup_status_led();
 
     // set RED LED STATUS ON
-    gpio_set_level(GPIO_NUM_11, 1);
-    gpio_set_level(GPIO_NUM_10, 0);
+    //gpio_set_level(GPIO_NUM_11, 1);
+    //gpio_set_level(GPIO_NUM_10, 0);
 
-    clear_screen();
+    CLEAR_SCREEN;
     while(1){
         switch(print_main_menu(1)){
             case 1: // start measuring
-                clear_screen();
+                CLEAR_SCREEN;
                 print_measure_type();
-                clear_screen();
+                CLEAR_SCREEN;
                 break;
-            case 2: // measuring settings
-                clear_screen();
-                measuring_settings();
-                clear_screen();
-                break;
-            case 3: // display settings
-                clear_screen();
+            case 2: // display settings
+                CLEAR_SCREEN;
                 display_settings();
-                clear_screen();
+                CLEAR_SCREEN;
                 break;
-            case 4: // exit
+            case 3: // exit
                 return;
         }
     }
-
-    // dump IO ports configuration into the console
-    //gpio_dump_io_configuration(stdout, (1ULL << 10) | (1ULL << 11));
-
-    clear_screen();
-
-
-    
+    CLEAR_SCREEN;
 }
