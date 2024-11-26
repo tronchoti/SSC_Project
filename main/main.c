@@ -304,14 +304,14 @@ void print_measure_type(){
             }
         }
 
-        int16_t values[temp_sensor[3]];
+        float values[temp_sensor[3]];
         HOR_SEP_DW(DISPLAY_SETTINGS[0]);
         uint8_t move_temp = wait_enter(0);
         float freq = (float)TEST_LENGTH_VALUES[temp_sensor[2]]/temp_sensor[3];
         switch(move_temp){
             case 1:
                 if(option == 4) {
-                    int16_t values[temp_sensor[4]];
+                    
                     switch(temp_sensor[0]){
                         case 0:
                             ultrasonic();
