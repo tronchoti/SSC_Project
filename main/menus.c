@@ -110,7 +110,7 @@ int print_main_menu(int option){
 */
 void print_header_in_test(int type, float freq, int last_avg){
     HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-    printf("│ MEASURING%*s │\n", DISPLAY_SETTINGS[0]-11, MEASURE_TYPES[type]);
+    printf("│ MEASURING%*s │\n", DISPLAY_SETTINGS[0]-11, SENSORS[type]);
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);
     printf("│ %-*s %*ld bytes │\n", 15, "Free memory", DISPLAY_SETTINGS[0]-24, esp_get_free_heap_size());
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);

@@ -8,9 +8,16 @@
 #include "constants.h"
 #include "menus.h"
 
-void dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length);
+typedef void (*ptr)();
+ptr dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length);
+ptr dht11_serial_mode(int type, float freq, int samples, gpio_num_t GPIO_PIN);
 static void print_summary(int test_length, float *temp, float *hum);
+static void serial_print();
 
+static float *temp_array = NULL;
+static float *hum_array = NULL;
+
+static int test_length_i = 0;
 
 /*  TEMPERATURE SENSOR
 
@@ -22,9 +29,9 @@ static void print_summary(int test_length, float *temp, float *hum);
     - test_length: test duration
 
 */
-void dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
-
-    printf("\e[1;1H\e[2J");
+ptr dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
+    test_length_i = test_length;
+    CLEAR_SCREEN;
     float last_avg_temp = 0;
     float last_avg_hum = 0;
     float last_vals_temp[16] = {0};  
@@ -34,8 +41,12 @@ void dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
     float delta_num_hum = 0;
     float delta_perc_hum = 0.0;
     int counter = 0;
-    float temp[test_length];
-    float hum[test_length];
+    if(temp_array != NULL){
+        free(temp_array);
+        free(hum_array);
+    }
+    temp_array = malloc(test_length * sizeof(float));
+    hum_array = malloc(test_length * sizeof(float));
 
     for(int i = 0; i < test_length/16; i++){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
@@ -51,8 +62,8 @@ void dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
         HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
         for(int j = 0; j < 16; j++){
             dht_read_float_data(DHT_TYPE_DHT11, GPIO_PIN, &last_vals_hum[j], &last_vals_temp[j]);
-            temp[i*16+j] = last_vals_temp[j];
-            hum[i*16+j] = last_vals_hum[j];
+            temp_array[i*16+j] = last_vals_temp[j];
+            hum_array[i*16+j] = last_vals_hum[j];
             if(last_avg_temp != 0){
                 delta_num_temp = last_vals_temp[j] - last_avg_temp;
                 delta_num_hum = last_vals_hum[j] - last_avg_hum;
@@ -81,9 +92,51 @@ void dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
 
         
         printf("\e[1;1H\e[2J");
-        print_summary(test_length, temp, hum);
+        
     }
-    return;
+    print_summary(test_length, temp_array, hum_array);
+    return &serial_print;
+}
+
+/* SERIAL MODE
+    Measures the sensor in a loop for a given number of samples.
+    Prints the raw value in a serial format.
+
+    The format is:
+    \start
+    <raw value>
+    <raw value>
+    ...
+    \end
+
+    This function is intended to be used when the user wants to later process the data
+    in other software, like Matlab, Python, etc.
+
+    By using Screen utility in Linux, with the parameter -L, the user can interact 
+    as the same time that all the output is stored in a file
+*/
+ptr dht11_serial_mode(int type, float freq, int samples, gpio_num_t GPIO_PIN){
+    test_length_i = samples;
+    CLEAR_SCREEN;
+    print_header_in_test(type, freq, 0);
+    printf("\\start");
+    wait_enter(0);
+    if(temp_array != NULL){
+        free(temp_array);
+        free(hum_array);
+    }
+    temp_array = malloc(samples * sizeof(float));
+    hum_array = malloc(samples * sizeof(float));
+    printf("Temperature,Humidity\n");
+    for(int i = 0; i < samples; i++){
+        dht_read_float_data(DHT_TYPE_DHT11, GPIO_PIN, &hum_array[i], &temp_array[i]);
+        printf("%f,%f\n", temp_array[i], hum_array[i]);
+        vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
+    }
+    wait_enter(0);
+    printf("\\end");
+    wait_enter(0);
+    return &serial_print;
 }
 
 /* PRINT SUMMARY
@@ -112,6 +165,20 @@ static void print_summary(int test_length, float *temp, float *hum){
     HOR_SEP_UP(DISPLAY_SETTINGS[0]);
     printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SUMMARY");
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+    /* SENSOR INFO 
+        ACCURACY:
+        TEMPERATURE -> +-2ºC
+        HUMIDITY -> +-5%
+
+        RESOLUTION:
+        Temperature -> 1ºC (8-bit)
+        Humidity -> 1% (8-bit)
+
+        RANGE:
+        Temperature -> 0ºC to 50ºC
+        Humidity -> 20% to 90%
+    */
+    printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SENSOR INFO -> Accuracy: +-2ºC +-5%%");
     printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-2, "TEMPERATURE");
     printf(" %-*s │\n", (DISPLAY_SETTINGS[0]/2)-2, "HUMIDITY");
     HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
@@ -128,3 +195,11 @@ static void print_summary(int test_length, float *temp, float *hum){
     if(wait_enter(0) == 1) return;
 }
 
+static void serial_print(){
+    printf("\\start DHT11\n");
+    for(int i = 0; i < test_length_i; i++){
+        printf("%f, %f\n", temp_array[i], hum_array[i]);
+    }
+    printf("\\end\n");
+    wait_enter(0);
+}

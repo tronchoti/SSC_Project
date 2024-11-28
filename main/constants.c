@@ -54,6 +54,7 @@ const char *TEST_SETTINGS[] = {
     "Number of samples", \
     "Start", \
     "Serial mode", \
+    "Print serial last test", \
     "Exit"
 };
 

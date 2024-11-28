@@ -19,6 +19,7 @@
 #include "onewire.h"
 #include "dht11_w.h"
 #include "menus.h"
+#include "hc_sr05.h"
 
 uint16_t settings[] =   {100,1000};
 
@@ -59,33 +60,7 @@ uint16_t print_settings(uint16_t option){
     return 1;
 }
 
-/* SERIAL MODE
-    Measures the sensor in a loop for a given number of samples.
-    Prints the raw value in a serial format.
 
-    The format is:
-    \start
-    <raw value>
-    <raw value>
-    ...
-    \end
-
-    This function is intended to be used when the user wants to later process the data
-    in other software, like Matlab, Python, etc.
-
-    By using Screen utility in Linux, with the parameter -L, the user can interact 
-    as the same time that all the output is stored in a file
-*/
-void serial_mode(int type, float freq, int samples){
-    print_header_in_test(type, freq, 0);
-    printf("\\start\n");
-    for(int i = 0; i < samples; i++){
-        printf("%d\n", adc1_get_raw(ADC1_CHANNEL_1));
-        vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
-    }
-    printf("\\end");
-    wait_enter(0);
-}
 
 /* PRINT MEASURE TYPE
     Prints the measure type menu and waits for user input.
@@ -93,6 +68,8 @@ void serial_mode(int type, float freq, int samples){
 */
 void print_measure_type(){
 
+    // pointer to the function that will be returned
+    void (*last_test_print_serial)() = NULL;
     uint16_t option = 0;
     /*
         0 -> sensor type
@@ -104,7 +81,7 @@ void print_measure_type(){
 
     while(1){
         HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        for(int i = 0; i < 7; i++) {
+        for(int i = 0; i < 8; i++) {
             printf("│ ");
             (option == i) ? printf("%2s","->"): printf("  ");
             if(i < 4) {
@@ -128,20 +105,22 @@ void print_measure_type(){
                     
                     switch(temp_sensor[0]){
                         case 0:
-                            ultrasonic();
+                            last_test_print_serial = hc_sr05_start(temp_sensor[1], freq, temp_sensor[3]);
                             break;
                         case 1:
-                            
-                            dht11_start(temp_sensor[1], freq, temp_sensor[3]);
+                            last_test_print_serial = dht11_start(temp_sensor[1], freq, temp_sensor[3]);
                             break;
                         case 2:
                             //light();//measure_old(temp_sensor[2], freq, temp_sensor[0], temp_sensor[4]);
                             break;
                     }   
-                    //print_summary(values, temp_sensor[4]);
                 }else if(option == 5){
-                    serial_mode(temp_sensor[0], freq, temp_sensor[4]);
+                    last_test_print_serial = dht11_serial_mode(temp_sensor[0], freq, temp_sensor[3], temp_sensor[1]);
                 }else if(option == 6){
+                    if(last_test_print_serial != NULL){
+                        (*last_test_print_serial)();
+                    }
+                }else if(option == 7){
                     return;  // exit    SETTINGS_1
                 }   
                 break;
