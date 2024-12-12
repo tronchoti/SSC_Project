@@ -3,16 +3,16 @@
 \usepackage[english]{babel}
 \usepackage{graphicx}
 \usepackage[T1]{fontenc}
+
 \usepackage[left=2.5cm, right=2.5cm, top=2.5cm]{geometry}
 \graphicspath{ {./images/} }
 \usepackage{fancyhdr}
-\usepackage{titlesec}
+\fancyhfinit{\sffamily}
+\usepackage{lmodern}
 
-\titleformat*{\section}{\Large\bfseries\sffamily}
-\titleformat*{\subsection}{\large\bfseries\sffamily}
-\titleformat*{\subsubsection}{\itshape\subsubsectionfont}
+\usepackage{easytable}
 
-\def\titulo{ESP32-C6 SENSOR MEASURING}
+\def\titulo{ESP32-C6 SENSOR TESTBENCH}
 %\usepackage[none]{hyphenat}
 \usepackage{wrapfig}
 \usepackage{array}
@@ -31,18 +31,27 @@ anchorcolor = blue]{hyperref}
 \usepackage{enumitem}
 \usepackage{subcaption}
 
+
 \definecolor{dkgreen}{rgb}{0,0.6,0}
 \definecolor{gray}{rgb}{0.5,0.5,0.5}
 \definecolor{mauve}{rgb}{0.58,0,0.82}
 
+\usepackage{titlesec}
+\titleformat{\section}
+{\normalfont\fontsize{20}{20}\bfseries}{\thesection}{1em}{}
 
+\titleformat{\subsection}
+{\normalfont\fontsize{15}{15}\bfseries}{\thesubsection}{1em}{}
+
+\titleformat{\subsubsection}
+{\normalfont\fontsize{12}{12}\bfseries}{\thesubsubsection}{1em}{}
 
 \title{\textbf{\huge{\titulo}}\\
 	{Comparing sensor values with datasheet}}
 
 
 
-\author{Gomez Cuesta Alvar}
+\author{Gomez Cuesta, Alvar}
 \date{\today}
 
 \pagestyle{fancy}
@@ -59,8 +68,604 @@ anchorcolor = blue]{hyperref}
 	\maketitle
 	
 	\newpage
+	\tableofcontents
+	\newpage
 	
-	\section*{EXERCISES}
-		\subsection*{Exercise x}
+	\section{INTRODUCTION}
+	\begin{normalsize}
 		
+		This project forms part of the Signals and Sensor Conditioning course, therefore some information provided here might be redundant if you already did the course, but I think it's important to include it here for external readers.\\
+		
+		In this document I am going to explain the process I have been through while learning how to use the ESP-32 micro-controller and the HC-SR05 and DHT-11 sensors. Also, I will write down all my notes regarding the C language and what I learn during the realization of this project, as well as things that I think that are important to explain in order to understand how the code works.
+		\subsection{What can you do with this program?}
+		My initial idea, and it remains the same, was to create an independent test bench to which you could connect through the UART protocol, meaning that you wouldn't need to install any extra software in your computer in order to be able to perform tests and check the results. A kind of a "plug and play" device.\\
+		
+		With this idea in mind, I ended up doing a console based GUI that can be controlled by sending commands through the UART protocol. Everything is executed in the ESP32 micro-controller. Later in this document the operation of this GUI will be explained.\\
+		
+		Things you can do:
+		\begin{itemize}
+			\item Choose between multiple sensors.
+			\item Choose the length and frequency of the test you want to run.
+			\item Print the last test results in ``serial" mode so you can later put it into a Matlab, Python or other language scripts.
+		\end{itemize}
+		Things that are not implemented yet, but that are planned to be implemented in the future:
+		\begin{itemize}
+			 \item Run multiple test with different sensors at the same time. This way I will learn how to use tasks in FreeRTOs and how to manage them.
+			 \item Connect to the device through the WiFi chip, for example with a mobile phone, and be able to control it from there.
+		\end{itemize}
+		\subsection{Concepts}
+		In this section, a series of relevant concepts for this report are going to be explained. Even though some of them are implemented, the main target of this project is to allow the user to test whatever sensor that uses a ``common" interface to communicate with the board.
+			\begin{itemize}
+				\item \textbf{Precision:} refers to the ability of a sensor/device to measure the same quantity multiple times with a low spread in the output value.\\
+				Precision can be expressed as:
+				\begin{itemize}
+					\item \textbf{Repeatability:} closeness of the output readings when the same input is applied under the same conditions in a short period of time. We are going to be focusing on this.
+					\item \textbf{Reproducibility:} closeness of the output readings when the same input is applied under different conditions, like location or time of measurement for example.
+				\end{itemize}
+				\item \textbf{Resolution:} smallest change that can be measured by a sensor. This typically depends on the bit depth of the ADC or the controller capabilities. It is usually expressed in bits, with the least significant bit being the equivalent to the smallest change measurable.\\
+				\item \textbf{Uncertainty:} error or doubt in the measurement due to multiple factors. There are 2: type A, which is calculated based on statistical methods, and type B, which is evaluated by other means, like calibration data, someone opinion, manufacturer specifications, or other possible factors that we will see later for each sensor.
+			\end{itemize}
+	\end{normalsize}
+	\newpage
+	\section{SENSORS}
+		\begin{normalsize}
+			In this section all the sensors available to be used in this project are going to be explained. Even though this project aims to let the user use whatever sensor he wants, as long as it has a good protocol to communicate with the board%TODO
+		\end{normalsize}
+		
+		% ULTRASONIC RANGE MODULE
+		\subsection{HC-SR04/HC-SR05}
+			\begin{normalsize}
+				This sensor, also known as an \textbf{Ultrasonic Ranging Module}, allows the user to measure distances in a close range by using ultrasonic waves. The way this sensor works is as follows:
+				\begin{figure}[h]
+					\centering
+					\includegraphics[width=0.5\textwidth]{images/ultrasonic_1.png}
+					\caption{Ultrasonic sensor operation}
+					\label{Ultrasonic_Operation}
+				\end{figure}
+				\begin{figure}[h]
+					\centering
+					\includegraphics[width=0.7\textwidth]{images/ultrasonic_schematics.png}
+					\caption{HC-SR04/HC-SR05 pin out and dimensions}
+				\end{figure}
+				\subsubsection{Measurement procedure}{\label{HC-SR05_proc}}
+					As seen in the image above, in order to generate the data, the sensor sends some ultrasonic waves and wait for them to bounce off the nearest object. The time elapsed between the moment the waves are sent and the moment they are received gives as a result the distance to the object.\\
+					
+					The timing diagram of the sensor is as follows:
+					\begin{enumerate}
+						\item Send a short \textbf{HIGH} value to the \textbf{trigger} pin of the sensor with a width of $10 \mu S$.
+						\item The sensor will send 8 40$khz$ waves that will bounce in the nearest object in front of the sensor.
+						\item A \textbf{HIGH} signal will be sent through the echo pin to the board. The width of this signal is equivalent to the time taking for the waves to bounce in the object and return back to the sensor.
+					\end{enumerate}
+					\begin{figure}[h]
+						\centering
+						\includegraphics[width=0.7\textwidth]{images/Ultrasonic_diagram.png}
+						\caption{Timing diagram}
+						\label{HC-SR04/HC-SR05_timing}
+					\end{figure}
+					
+					
+				\subsubsection{Datasheet}
+					The sensor datasheet gives us the following specifications:\\
+					\renewcommand{\arraystretch}{1.5}
+					\begin{table}[h]
+						\centering
+						\begin{tabular}{|p{3cm}|p{3cm}|}
+							\hline
+							\textbf{Resolution}&	0.3cm\\\hline
+							\textbf{Angle}			&	15º\\\hline
+							\textbf{Range}			&	2-450cm\\\hline
+							\textbf{Supply current} & 10-40 mA\\\hline
+						\end{tabular}
+					\end{table}
+					We will try to prove how accurate this specifications are.
+			\end{normalsize}
+			
+		% TEMPERATURE & HUMIDITY
+		\subsection{DHT-11}
+			\begin{normalsize}
+				DHT stands for ``\textbf{Digital Humidity Temperature}".\\
+				
+				The DHT-11 measures \textbf{Temperature} and \textbf{Humidity} sensor. It can measure both values at the same time. It's not one of the best in the market, but is a cheap sensor and is included in almost every beginner kit. In order to measure both values, it uses a \href{https://atlas-scientific.com/blog/humidity-sensor-types/}{capacitive humidity sensor }, and a \href{https://www.teamwavelength.com/thermistor-basics/}{thermistor}.
+				\begin{figure}[h]
+					\centering
+					\includegraphics[width=0.2\textwidth]{images/DHT-11.png}
+					\caption{DHT-11 sensor pinout}
+				\end{figure}\\
+				In order to make the sensor work properly, we need to put a 10k$\Omega$ resistor as a pullup resistor that will go from the data pin to the Vcc.
+				\subsubsection{Measurement procedure}
+				DHT is a slow sensor, so we have to be careful with the timings, otherwise we will get errors in the measurement. We can divide the measurement procedure in 3 steps:
+				\begin{enumerate}
+					\item \textbf{Request to DHT}: the micro-controller sends a signal to the DHT as a request.
+					\item \textbf{Respond from DHT}: the DHT sensor responds with another signal that is processed by the micro-controller.
+					\item \textbf{Start of data transmission}: DHT starts sending the data.
+				\end{enumerate}
+				In the next picture we can see the needed timings:
+				\begin{figure}[h]
+					\centering
+					\includegraphics[width=0.8\textwidth]{images/DHT-11_diagram.png}
+					\caption{DHT-11 timing diagram}
+				\end{figure}\\
+				Now, the data structure used by the DHT to transmit the values is: 40 bits transmitted sequentially, with one high and one low signal to calculate the value of each bit. The 40 bits are grouped in 5 bytes, the first and third one store the Humidity and Temperature value respectively. Bytes 2 and 4 are filled with zeroes, and byte 5 is the checksum. The checksum is calculated as follows: \vspace{5pt}\\\textit{byte\_5 == (byte\_1 + byte\_2 + byte\_3 + byte\_4) \& 0xFF}\vspace{-5pt}\\
+				\begin{figure}[h]
+					\centering
+					\includegraphics[width=0.7\textwidth]{DHT-11_data_structure.png}
+					\caption{DHT-11 data structure for read values}
+				\end{figure}\\
+				More information can be found \href{https://github.com/UncleRus/esp-idf-lib/blob/master/components/dht/dht.c}{here}.\\
+				
+				Now, how does the sensor send the bits values to the micro-controller? As mentioned before, for each bit, we have a low duration value, and a high duration value. First, the DHT sets the signal to low for approximately 50us, and then let it float back to HIGH. If the duration of the HIGH signal is longer than the duration of LOW signal, then it means the sensor is transmitting a logic '1' value. '0' if it's the opposite case. 
+				\subsubsection{DATASHEET}
+				The sensor datasheet gives us the following specifications:\\
+				\renewcommand{\arraystretch}{1.5}
+				\begin{table}[h]
+					\centering
+					\begin{tabular}{|p{5cm}|p{3cm}|}
+						\hline
+						\textbf{Resolution}&	1ºC/1\%\\\hline
+						\textbf{Temperature Range}			&	0-50ºC\\\hline
+						\textbf{Temperature Accuracy} & $\pm$2ºC\\\hline
+						\textbf{Humidity Range} & 20-90\%\\\hline
+						\textbf{Humidity Accuracy} & $\pm$5\%\\\hline
+						\textbf{Supply current} & 10-40 mA\\\hline
+					\end{tabular}
+				\end{table}
+				We will try to prove how accurate this specifications are.
+			\end{normalsize}
+	\newpage
+	\section{ESP-32 C6}
+	\begin{normalsize}
+		The board we are going to be using is the \textbf{ESP-32 C6 DEVKIT}. The schematics of the board are:
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.6\textwidth]{ESP32-C6-DEVKIT_PINOUT.png}
+		\end{figure}\\
+		A picture of the board with the sensors mounted.\\
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.55\textwidth]{irl_lab.jpg}
+		\end{figure}
+	\end{normalsize}
+	\section{CODE}
+	\begin{normalsize}
+		In this section I will be explaining the different parts of the code, as well as how the interface works. Multiple flowcharts will be include, as well as references to some parts of the code.\\
+		
+		In order to keep the code organised and avoid long and confusing files, I have divided the code in multiple files, each of them with it purpose. 
+		\subsection{constants.c}
+		This file contains all the necessary strings for the menus to work. \\
+		The \textit{\#define} statements are later used to print the borders of the GUI.
+		
+		\begin{figure}[h]
+			\centering
+			\includegraphics[scale=0.18]{define_constants.png}
+		\end{figure}
+		\vspace{20pt}		
+		\noindent\large \textbf{WAIT ENTER}\normalsize\\
+		This function waits for the user to press a key. Checks every 100ms if there's any new character in the \textbf{stdin} buffer. \\
+		
+		When a new character is detected, it checks if its either an enter key, or another type of case. In this case only the arrows are mapped and they always start with the code. \textbf{\textbackslash033}. The ANSI scape codes can be found \href{https://en.wikipedia.org/wiki/ANSI_escape_code}{here}. The code for each arrow is:
+		\begin{itemize}
+			\item \textbf{Arrow up}: "\textbackslash033[A"
+			\item \textbf{Arrow down}: "\textbackslash033[B"
+			\item \textbf{Arrow right}: "\textbackslash033[C"
+			\item \textbf{Arrow left}: "\textbackslash033[D"
+		\end{itemize}
+		
+		\noindent \textbf{All the other arrays of strings in the file are already documented.}
+		
+		\subsection{hc\_sr05.c}
+		For the ultrasonic ranging module there was no driver available on the internet, so I decided to do it by myself. I already explained how to use the HC\_SR05 previously in the \ref{HC-SR05_proc} section.\\
+		
+		I'm going to try to explain the code the best way possible. However, I highly recommend opening the file alongside this PDF in order to fully understand the dataflow and maybe read some annotations in the code.\\
+		
+		On one side, we need to somehow detect when a edge change occurs in the GPIO pin selected. For this I decided to use interruptions.\\
+		
+		\textbf{Interruptions} are a mechanism implemented in almost every micro-controller/CPU. This allows to stop whatever process the CPU is running and do another short and more important task. There are \textbf{hardware} and \textbf{software} interruptions. In our case, GPIO interruptions are hardware type.\vspace{5pt}\\
+		
+		\setlength{\intextsep}{-10pt}
+		\begin{wrapfigure}[12]{l}{0.4\textwidth}
+			\begin{center}
+				\includegraphics[width=0.4\textwidth]{hc_sr05_declare_var.png}
+			\end{center}
+		\end{wrapfigure}
+		As global variables for the code of this file, I declared a \textit{Queue Handler} which will be explained later; a float pointer that will later store the address to the allocated space in the heap for the test measurements; \textit{first\_time} and \textit{last\_time}, two variables for the timer values captured in order to calculate the distance; \textit{last\_distance}, that will store the last 16 values average; \textit{is\_first\_edge}, the boolean variable for the interruption generated by the GPIO pin; \textit{test\_lenght\_i}, an integer variable that will store the lenght of the test.\\
+		
+		\noindent Below you will see the applied use of each of these variables.\vspace{20pt}\\
+		
+		
+		
+		\noindent\large \textbf{HC-SR05 START}\normalsize\\
+		Parameters:
+		\begin{itemize}
+			\item \textbf{GPIO\_PIN}: pin used for data connection with the sensor
+			\item \textbf{freq}: frequency of measurement
+			\item \textbf{test\_lenght}: total number of samples of the test
+		\end{itemize}
+		
+		So, first step to enable GPIO interruptions is going to be configuring the GPIO selected pin.\vspace{-7pt}\\
+		\setlength{\intextsep}{-12pt}
+		\begin{wrapfigure}[8]{l}{0.5\textwidth}
+			\begin{center}
+				\includegraphics[width=0.5\textwidth]{HC_SR05_gpio_config.png}
+			\end{center}
+		\end{wrapfigure}
+		At the beginning of the \textit{\textbf{hc\_sr05\_start}} function, we declare and initialize the \href{https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/gpio.html#_CPPv413gpio_config_t}{\textit{gpio\_config\_t}} struct. Set the mode to INPUT and the interruption type to \textbf{ANYEDGE}, since we are going to be checking both the rising and the falling edges.\\
+		
+		\noindent Last step is calling \textit{gpio\_config} and passing the structure as a parameter. Now the GPIO pin is configured.\\
+		\newpage
+		Second step is going to be creating a queue for all the events generated. Events and interruptions ``are" the same in this context. The reason why we need this queue is because we might later want to recover some information that was generated in those interruptions, as we will see later.\vspace{-10pt}\\
+		\setlength{\intextsep}{-10pt}
+		\begin{wrapfigure}[10]{l}{0.4\textwidth}
+			\begin{center}
+				\includegraphics[width=0.4\textwidth]{hc_sr05_queue.png}
+			\end{center}
+		\end{wrapfigure}
+		\noindent By using the function \href{https://www.freertos.org/Documentation/02-Kernel/04-API-references/06-Queues/01-xQueueCreate}{xQueueCreate}, we are going to create a queue that can store up to 10 events(without being dispatched), and the size of each event, the information we are going to store, is going to be of type uint\_32. For this case, since we only generate 2 interruptions per sensor activation, a size of 2 for the queue should be enough if we use this queue exclusively for this sensor. A size of 10 is a safer approach though.\\
+		
+		Then we have to create the task, using the function \href{https://www.freertos.org/Documentation/02-Kernel/04-API-references/01-Task-creation/01-xTaskCreate}{xTaskCreate}. We pass as parameters:
+		\begin{itemize}
+			\item \textbf{gpio\_event\_task}: function that is going to be in charge of dispatching the queue events.
+			\item \textbf{``gpio\_event\_task"}: kind of an identifier name for the task.
+			\item \textbf{2048}: stack depth. Not enough time to fully understand how exactly this parameter affects, but 2048 is a safe value.
+			\item \textbf{NULL(task parameteres)}: since we don't need to send any parameters to the task, we set it to NULL.
+			\item \textbf{5}: task priority.
+			\item \textbf{NULL()}: \textit{Used to pass a handle to the created task out of the xTaskCreate() function. pxCreatedTask is optional and can be set to NULL.}
+		\end{itemize}
+		The new task will be the one in charge or manipulating the data generated by the interruptions, or executing whatever code we put in there.\\
+		
+		\noindent Now, queues are allocated in the RAM(or heap memory in this case) that is available for the FreeRTOS system, so we have to be very careful with the amount of resources we assign to the queues, and we should always try to \textbf{optimize} the space, since we are working with embedded systems.\\
+		\setlength{\intextsep}{0pt}
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{hc_sr05_gpio_event_task.png}
+		\end{figure}\vspace{5pt}\\
+		\textbf{\textit{gpio\_event\_taks}} is the function in charge of dispatching the events from the queue and performing the necessary calculations for the distance. \\
+		
+		\vspace{10pt}
+		\setlength{\intextsep}{0pt}
+		\begin{wrapfigure}[6]{l}{0.45\textwidth}
+			\includegraphics[width=0.45\textwidth]{isr_service.png}
+		\end{wrapfigure}
+		
+		\noindent Third step is installing the \textit{isr service} for the GPIO pins. This allows each GPIO pin to have its own interruption handler. Call \textit{\textbf{gpio\_install\_isr\_service}} and then add a handler for the selected pin with \textit{\textbf{gpio\_isr\_handler\_add}}. An ISR handler is a short and small function that we call/execute when the interruption occurs. We should avoid passing arguments to it, and make it as short and fast as possible.\vspace{-8pt}\\
+		
+		\begin{wrapfigure}[13]{l}{0.45\textwidth}
+			\includegraphics[width=0.45\textwidth]{hc_sr05_ISR_handler.png}
+		\end{wrapfigure}
+		\noindent This function, as shown in the image attached, will be triggered every time a change in any of the edges is detected of the chosen GPIO pin. The HC-SR05 data signal starts when it pull up the signal to HIGH, thus a rising edge; and ends the signal with dropping it back to LOW, thus a falling edge.\\
+		When we detect the first edge(rising), we call the function \textbf{\textit{esp\_timer\_get\_time}} (explanation in \hyperref[dist_calc]{\textit{\textbf{Distance calculation}}} section) and store the value in a variable called ``\textit{first\_time}". When we detect the second edge(falling), we follow the same procedure but store the value in ``\textit{last\_time}".
+		And \textbf{only} when a falling edge is detected, a new event is sent to the queue, by using \href{https://www.freertos.org/Documentation/02-Kernel/04-API-references/06-Queues/04-xQueueSendFromISR}{\textit{\textbf{xQueueSendFromISR}}}, indicating the queue we want to use, a parameter we would like to pass, and in this case as NULL, the priority of the event.\\
+		
+		In order to store some temporary data, a few new variables are created.\\
+		\setlength{\intextsep}{-5pt}
+		\begin{wrapfigure}[5]{l}{0.45\textwidth}
+			\includegraphics[width=0.45\textwidth]{hc_sr05_var.png}
+		\end{wrapfigure}\vspace{-25pt}
+		\begin{itemize}
+			\item \textbf{last\_avg\_distance} stores the average of the last 16 measured values.
+			\item Both \textit{delta} variables will store the delta calculated to the previous average.
+			\item \textbf{distance\_array} allocates as much space needed to store all the measurements from the test.
+		\end{itemize}
+		Now is time to format and print the GUI and display the data to the user. CLEAR\_SCREEN is executed. Then a for loop starts, which will iterate a total of $\boldsymbol{test\_lenght/16}$. This is just a personal preference for the GUI, since this will make the program show at maximum 16 measurements at the same time.
+		\setlength{\intextsep}{0pt}
+		\begin{wrapfigure}[20]{l}{0.6\textwidth}
+			\includegraphics[width=0.6\textwidth]{hc_sr05_print_main.png}
+		\end{wrapfigure}
+		Test header is printed and a new for loop starts, this time it will only iterate 16 times, for the reason explained before.\\
+		
+		\noindent It's time to activate the sensor. To do this, we send a short HIGH signal through the \textit{trigger} pin, and wait for the sensor to send a signal back through the \textit{echo} pin.\\
+		
+		\noindent After this, the interruptions will be triggered and the distance will be calculated. The new value is stored in it's position of the array allocated before, and the deltas are calculated. If previous average is 0, we of course can't calculate a delta, so it remains to 0.\\
+		
+		\noindent Last step is printing a new line with the measurement and the calculated deltas. As we exit the for loop, the average of the last 16 values is calculated.\\
+		
+		Eventually, when the test is finished, the summary of the test is printed and we return the pointer to the \textit{serial\_print} function.
+		\subsubsection*{\large Distance calculation}
+		\label{dist_calc}
+		In order to calculate the distance, I have to find a way to measure timings precisely. As we saw in the measurement procedure of the HC-SR05, the distance measured is proportional to the amount of time the signal is HIGH. This is the perfect usage case for a \textbf{Timer}.\\
+		
+		Now, at the beginning, while reading and searching the documentation about \href{https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/timer.html#timer-api-interrupts}{\textbf{General Purpose Timers}}, my idea was to start a timer when the rising edge was detected, and stop it when the falling edge was detected. However, these timers are not really designed to be started and stopped continuously, but to be triggered automatically when the setted limit time is reached and, let's put an example, a device connection was not established in a reasonable amount of time.\\
+		
+		I encountered multiple problems while testing and trying to understand how they work. In none of the cases I managed to stop then in an interruption without the system crashing. Probably, with more time and testing, I could end up with a code that works with this aproach. However, I decided to discard \textbf{General Purpose Timers} and use the \textbf{built-in timer} that is always running since the system boots. It is a 64-bit timer with 1 microsecond precision.\\
+		
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{hc_sr05_ISR_handler.png}
+		\end{figure}\vspace{10pt}
+		Calling \textbf{\textit{esp\_timer\_get\_time}} function will return the timer value, that we store in a variable. To calculate the distance, I apply the following formula:\\
+		\begin{equation*}
+			Distance =  \frac{(last\_time - first\_time) \times 0.0340}{2}
+		\end{equation*}\\
+		\begin{itemize}
+			\item 0.0340 is the speed of sound in m/s (340m/s) divided by 100 to convert the output to centimetres.
+			\item \textit{We divide distance by 2 because the sensor returns the round trip time, which doubles the distance
+				measurement}
+		\end{itemize}
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.45\textwidth]{hc_sr05_gpio_event_task.png}
+		\end{figure}
+		\vspace{20pt}
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.45\textwidth]{hc_sr05_test_ex.png}
+			\caption{Running a test}
+		\end{figure}
+		\newpage
+		\large \textbf{SERIAL MODE}\normalsize\\
+		
+		If we would like to be able to capture the data and later put it into Matlab, as we will do later, this mode will print the values in the terminal without any extra formatting.\vspace{-10pt}\\
+		\setlength{\intextsep}{0pt}
+		\begin{wrapfigure}[14]{l}{0.45\textwidth}
+			\includegraphics[width=0.45\textwidth]{hc_sr05_serial_mode.png}
+		\end{wrapfigure}
+		A ``start" message is printed and the program waits for an Enter input. This is the moment when we start logging the output. Also, we make sure the pointer to the array that will store the data is NULL before allocating new memory, and if that's the case, we \textit{free} it.\\
+		
+		\noindent The test starts and prints all the values. The measurement procedure is exactly the same as in the main function.\\
+		
+		\noindent Eventually, when the test is finished, the program waits for the user to press the enter key. Here is when we stop the logging and save the file in the project directory. The program returns a pointer to the \textit{serial\_print} function.\\
+		
+		\noindent\rule{1\textwidth}{0.4pt}\vspace{5pt}\\
+		\textbf{CAPTURING TERMINAL OUTPUT: }To capture the terminal output, we can use the monitor tool included in \textbf{idf.py}. By pressing \textit{Ctrl + T} we enter into menu mode, where we have a \href{https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/tools/idf-monitor.html}{lot of options}. \\
+		
+		\noindent \textbf{Ctrl + L} starts or stop the logging and saves the file in our project directory.\\
+		\noindent\rule{1\textwidth}{0.4pt}\vspace{5pt}\\
+	
+		
+		\large \textbf{PRINT SUMMARY}\label{SUMMARY}\normalsize\\
+		
+		It calculates the max, min and average value of the test. It also prints a header for a better looking.\\
+		
+		\begin{figure}[h]
+			\centering
+			\begin{subfigure}{.45\textwidth}
+				\centering
+				\includegraphics[height=0.17\textheight]{hc_sr05_summary.png}
+			\end{subfigure}
+			\begin{subfigure}{.45\textwidth}
+				\centering
+				\includegraphics[height=0.17\textheight]{hc_sr05_summary_ex.png}
+			\end{subfigure}
+		\end{figure}
+		
+		\vspace{20pt}
+		
+		\large \textbf{SERIAL PRINT}\label{SERIAL_PRINT}\normalsize\\
+		
+		This small function prints the last test results. It stops before and after printing, so the user can save everything in a file.\\
+		
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.45\textwidth]{hc_sr05_serial_print.png}
+		\end{figure}\vspace{5pt}
+		The reason why I decided to make this function only accessible by returning the pointer to it, as seen in the previous code explained, is to unify for all sensors that are added to the code later. Let's explain this better with an example:\vspace{-25pt}\\	
+		\setlength{\intextsep}{10pt}	
+		\begin{wrapfigure}[15]{r}{0.45\textwidth}
+			\begin{center}
+				\includegraphics[width=0.45\textwidth]{hc_sr05_serial_ex.png}
+			\end{center}
+		\end{wrapfigure}
+		\begin{itemize}
+			\item Some sensors might measure multiple values at the same time, like the DHT-11, others will only measure one at once, like the HC-SR05. Others might even want to use a different type of data structure.
+			\item By returning a pointer to the function, we avoid having to check from what type of sensor the data comes from, or its necessary formatting when printing the data. This might not be the best way, but since I program each sensor in a different file, I found this procedure the best fitting.\\
+		\end{itemize}
+
+		\newpage
+		
+		\subsection{dht11\_w.c}
+		This file pretends to be used as a wrapper of the original DHT-11 driver provided by the ESP-IDF team in their github, which can be found \href{https://github.com/UncleRus/esp-idf-lib/blob/master/components/dht/dht.c}{here}.\\
+		\setlength{\intextsep}{-10pt}
+		\begin{wrapfigure}[6]{l}{0.4\textwidth}
+			\begin{center}
+				\includegraphics[width=0.4\textwidth]{dht_11_code0.png}
+			\end{center}
+		\end{wrapfigure}
+		We create 2 variables that will later store the address to the float array that stores the last test values. The reason why we instantiate them here, out of any function, is because we need them to be accessible by multiple functions.\\
+		However, with the \textbf{static} option we limit the scope of this variables to only this file, making them "private".
+		
+		\vspace{40pt}
+		\noindent\large \textbf{DHT-11 START}\normalsize\\
+		Parameters:
+		\begin{itemize}
+			\item \textbf{GPIO\_PIN}: pin used for data connection with the sensor
+			\item \textbf{freq}: frequency of measurement
+			\item \textbf{test\_lenght}: total number of samples of the test
+		\end{itemize}
+		\begin{wrapfigure}[12]{l}{0.4\textwidth}
+			\begin{center}
+				\includegraphics[width=0.4\textwidth]{dht_11_code1.png}
+			\end{center}
+		\end{wrapfigure}
+		For each read value(temperature and humidity) there will be a variable storing the last value read, and array containing the last 16 values, and a delta to the last average in numeric and percentage type.\\
+		
+		\underline{Note here}: the reason why \textbf{temp\_array} and \textbf{hum\_array} are initialized using malloc, is because we need these arrays to be stored in the heap, since we are later going to need access from outside of the function. If we initialize the same way as we did in the previous ones, then once we exit the function scope, they are no longer accessible, because they are stored in the stack.\vspace{3pt}\\
+		In case the previous arrays were already allocated with malloc, we first free them to avoid possible problems with data in memory.\\
+		\newpage
+		\noindent A for loop starts, and it iterates a total of $\boldsymbol{test\_lenght/16}$ times. Then, the header of the GUI is printed T in
+				
+		\setlength{\intextsep}{-10pt}
+		\begin{wrapfigure}[18]{l}{0.7\textwidth}
+			\begin{center}
+				\includegraphics[width=0.7\textwidth]{dht_11_code2.png}
+			\end{center}
+		\end{wrapfigure}
+		\noindent the terminal. A new for loop starts, and it iterates 16 times, since I thought that 16 values are good enough to be shown at the same time in the GUI. An average of these 16 values is later calculated.\\
+		
+		\noindent Next step is reading data from the sensor. We call the \textit{\textbf{dht\_read\_float\_data}} function, and pass as parameters: the name of the sensor,
+		the pin used for the sensor, and a pointer to the temperature variable and another one for the humidity variable.\vspace{5pt}\\
+		
+		\noindent Store the new data in the test array, and calculate the delta to later display the values properly.\\
+		After everything has been printed and the 16 values round is finished, calculate the average of the last 16 values and start again.\\
+		
+		\noindent\large \textbf{SERIAL MODE}\normalsize\\
+		
+		Parameters:
+		\begin{itemize}
+			\item \textbf{freq}: frequency of measurement
+			\item \textbf{samples}: total number of samples of the test
+			\item \textbf{GPIO\_PIN}: pin used for data connection with the sensor
+		\end{itemize}
+		
+		\begin{wrapfigure}[15]{l}{0.55\textwidth}
+			\begin{center}
+				\includegraphics[width=0.55\textwidth]{dht_11_serial_mode.png}
+			\end{center}
+		\end{wrapfigure}
+		\noindent This function prints all the values in serial mode, this is without a GUI, so that the user can capture all the values in a file and later put it into matlab or other scripts to analyse the results, as we will do later.\\
+		
+		\noindent A start message is printed and the program wait for the user to press enter. Then, the values are measured and printed and, after the for loop is finished, the program waits again for the user to press enter, prints and end message, and returns back to the previous menu.\\
+		
+		Returns:
+		\begin{itemize}
+			\item pointer to the \textit{serial\_print} function, that will be explained later.
+		\end{itemize}
+				
+		\newpage
+		
+		\noindent\large \textbf{PRINT SUMMARY}\normalsize\\
+		Parameters:
+		\begin{itemize}
+			\item \textbf{test\_lenght}: total number of samples of the test
+			\item \textbf{*temp}: pointer to the temperature array
+			\item \textbf{*hum}: pointer to the humidity array
+		\end{itemize}
+		Same operation as \underline{\ref{SUMMARY}}\\
+		
+		\noindent Returns:
+		\begin{itemize}
+			\item pointer to the \textit{serial\_print} function, that will be explained later.
+		\end{itemize}
+		
+		\noindent\large \textbf{SERIAL PRINT}\normalsize\\
+		See \underline{\ref{SERIAL_PRINT}}. Operation is the same.
+		\newpage
+		\subsection{main.c}
+		
+		This file contains the main code of the program, as well as the functions in charge of printing the GUI and the menus.\\
+		
+		\noindent \large \textbf{APP MAIN}\normalsize\\
+		
+		This is the main program function. All ESP-IDF must have a function named \textbf{\textit{app\_main}}.\\
+	
+		First, a ``Press enter to start" is printed to let the user know the micro-controller is ready to be used. This message remains in the screen until the user press the key \textit{Enter}.\\
+		
+		After this, the main menu function is called and the returned value is evaluated in a switch, that will decide the direction of the execution.\\ 
+		\begin{figure}[h]
+			\centering
+			\begin{subfigure}{0.45\textwidth}
+				\centering
+				\includegraphics[width=0.9\textwidth]{app_main.png}
+				\caption{app\_main code}
+			\end{subfigure}
+			\begin{subfigure}{0.45\textwidth}
+				\centering
+				\includegraphics[width=0.9\textwidth]{press_enter_start.png}
+				\caption{Start and main menu}
+			\end{subfigure}
+		\end{figure}\vspace{15pt}
+		
+		\noindent\large \textbf{PRINT MAIN MENU}\normalsize\\
+		
+		\begin{wrapfigure}[13]{l}{0.45\textwidth}
+			\includegraphics[width=0.45\textwidth]{main_print_menu.png}
+		\end{wrapfigure}
+		\noindent Prints the main menu options. These are:
+		\begin{itemize}
+			\item \textbf{Start measuring}
+			\item \textbf{Display settings}
+			\item \textbf{Exit}
+		\end{itemize}
+		More entries could be added here, like a settings menu to configure the WiFi settings for example. The strings used can be found in the file \textit{constants.c}, in the string array called \textit{MENU\_STRINGS}.\\
+		
+		\noindent By evaluating the output from \textit{wait\_enter} we can know what key the user pressed, and therefore moving the selection arrow up or down.\\
+		
+		\newpage
+		
+		\noindent\large \textbf{DISPLAY SETTINGS}\normalsize\\
+		
+		This entry is not really functional, since you can only change the GUI width. The minimum width is 60 and the maximum 120.\\
+		
+		In the future I would like to add more options. I don't paste an image with the code here because it too long, but the way it works is similar to the menu shown before.\\
+		
+		
+		\noindent\large \textbf{PRINT TEST TYPE}\normalsize\\
+		
+		This is the test configuration screen. Again, I won't paste an image of the code because the way it works is similar to the previous explained and is too long. By reading the code alongside this PDF should be enough to understand it.\\
+		
+		\noindent The available settings for the test are:
+		\begin{itemize}
+			\item \textbf{Sensor type}: choose between multiple sensors. So far only the \textbf{HC-SR04/5} and the \textbf{DHT-11} are working.
+			\item \textbf{GPIO pin}: not fully functional, but it let you choose the GPIO pin you would like to use for the data line.
+			\item \textbf{Test duration}: lets you choose the test length in time units. The values can be found in the \textit{constans.c} file, in the array \textit{TEST\_LENGTH/TEST\_LENGTH\_VALUES}
+			\item \textbf{Number of samples}: lets you choose the amount of samples you want to take.\\
+			The frequency is $(test\ length) / (number\ of\ samples)$
+		\end{itemize}
+		\noindent The available options are:
+		\begin{itemize}
+			\item \textbf{Start}: runs the test in GUI mode.
+			\item \textbf{Serial mode}: runs the test in serial mode.
+			\item \textbf{Print serial last test}: calls the function stored in the variable \textit{last \_test\_print\_serial} if it's not NULL.
+			\item \textbf{Exit}: returns to the main menu.
+		\end{itemize}
+		
+		
+		
+		
+	\end{normalsize}
+	
+	
+	
+	\newpage
+	\section{ANALYSIS}
+	\begin{normalsize}
+		In this section I am going to analyse the data gathered from the HC-SR05 sensor.\\
+		
+		\noindent I put the sensor at a distance of 55cm from a wall and run a test of 512 samples and 10 minutes lenght.\vspace{20pt}\\
+		
+		
+		\noindent\underline{\textbf{TYPE A UNCERTAINTY}}\\
+		Type A uncertainty is used to quantify the variation or the error in the measurement of the sensor in a space of time. We aim to show how good the repeatability of the sensor is.\\
+		
+		The matlab code is the following:
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{matlab.png}
+		\end{figure}\\
+		It first prompt the user a UI to choose the file in the file explorer. That file is later loaded, converted into a table and then the values are calculated.\\
+		The output from the execution with the file ``test.txt" that can be found in the github is:
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width = 0.5\textwidth]{console.png}
+		\end{figure}
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width=0.5\textwidth]{graph.png}
+		\end{figure}\\
+		The mean value is \textbf{55.35}. And the standard deviation is \textbf{0.399204}. \\
+		This value is really close to the precision of the sensor, which clearly indicates than in a stable environment, the sensor repeatability is really good.\\
+		
+		However, is important to now that in some environments we might need to calibrate the sensor.
+		
+		\noindent\underline{\textbf{TYPE B UNCERTAINTY}}\\
+		For this sensor, Type B uncertainties are slightly different to the typical ones:
+		\begin{itemize}
+			\item \textbf{Air Temperature}: this sensor uses ultrasonic waves, which travel at the speed of the sound. This is speed varies depending on multiple factors, and one of them is the air temperature. If, for example, the temperature varies between the sensors and the object(imagine there is air flowing), the measurements will probably not be consistent.\\
+			That also means that it might be necessary to calibrate the sensor.
+			
+			\item \textbf{Surface of the object}: if the object surface is not flat, waves might bounce in different directions, therefore making the measurement less precise, and even induce more error. Always try to point to a flat surface.
+			
+			\item \textbf{Timer resolution}: the resolution of the timer used to measure the time of flight have great impact in the results.
+			
+			\item \textbf{Resolution of the sensor}: the smallest change the sensor can measure.
+			
+		\end{itemize}
+	\end{normalsize}
+	\section{LEARNING ACHIEVEMENTS}
+	\begin{normalsize}
+		Thanks to this project, I've learned a lot of things.\\
+		\begin{itemize}
+			\item \textbf{Introduction to the ESP-32 micro-controllers}: I have always wanted to learn about them, but never got the chance to test one. I think they are really powerful micro-controllers and have a lot of potential usages.
+			\item \textbf{C programming}: I already knew a bit about C programming, since I did some projects in the past. However, with this project I learnt more things about pointers, memory management, and how to do a bit more efficient code.
+			\item \textbf{Measurement analysis}: during this course and the realization of this project, I learned about measurement procedures, uncertainty and more important concepts.
+		\end{itemize}
+	\end{normalsize}	
 \end{document}
