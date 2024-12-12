@@ -10,7 +10,7 @@
 #include "esp_intr_types.h"
 #include "esp_timer.h"
 #include "esp_rom_sys.h"
-#include "menus.h"
+
 #include "constants.h"
 
 typedef void (*ptr)();
@@ -34,7 +34,8 @@ static int test_length_i = 0;
 
 /* ISR handler for the gpio
     It sends the gpio number to the queue
-    Don't stop timer in ISR because it will cause a deadlock
+    Stopping the timer in ISR could cause a deadlock
+    or maybe other problems
 */
 static void IRAM_ATTR gpio_isr_handler(void* arg){
     if(is_first_edge){
@@ -49,14 +50,13 @@ static void IRAM_ATTR gpio_isr_handler(void* arg){
 }
 
 /* Task to handle gpio events
-    It checks if there is an event on the queue and prints the event
+    It checks if there is an event on the queue
 */
 static void gpio_event_task(void* arg){
     uint64_t time;
     for (;;) {
         if (xQueueReceive(gpio_evt_queue, &time, portMAX_DELAY)) {
             last_distance = (last_time - first_time) * 0.0343 / 2;
-            //printf("Distance: %.2f cm\n", distance);
         }
     }
 }
@@ -80,7 +80,7 @@ ptr hc_sr05_start(gpio_num_t GPIO_PIN, float freq, int test_length){
     gpio_config(&io_conf);
 
     /* create queue to handle gpio events */
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    gpio_evt_queue = xQueueCreate(2, sizeof(uint32_t));
     if(gpio_evt_queue == 0){
         ESP_LOGE("HC_SR05", "Failed to create event queue");
         return NULL;
@@ -121,7 +121,7 @@ ptr hc_sr05_start(gpio_num_t GPIO_PIN, float freq, int test_length){
         printf("│ %-10s %-*.3f │\n",  "Sampling frequency", DISPLAY_SETTINGS[0]-21, freq);
         HOR_SEP_MID(DISPLAY_SETTINGS[0]);
         printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-3, "Raw value");
-        printf("│ %-*s %*.1f %*c │\n", 20, "Last distance avg", 5, last_avg_distance, (DISPLAY_SETTINGS[0]/2)-29, ' ');
+        printf("│ %-*s %*.1f %*c │\n", 20, "Last distance avg", 8, last_avg_distance, (DISPLAY_SETTINGS[0]/2)-32, ' ');
         HOR_SEP_TABLE_MID(DISPLAY_SETTINGS[0]);
         for(int j = 0; j < 16; j++){
             // Trigger pulse
@@ -138,9 +138,9 @@ ptr hc_sr05_start(gpio_num_t GPIO_PIN, float freq, int test_length){
                 delta_num_distance = last_distance - last_avg_distance;
                 delta_perc_distance = (delta_num_distance/(float)last_avg_distance)*100;
             }
-            printf("│   Dist_rw(%*d): %*.1f", 4, counter++, 5, last_distance); 
-            printf("%*c", DISPLAY_SETTINGS[0]-(22+23), ' ');
-            printf("\u0394: %*.2f/%6.2f%%   │\n", 8, delta_num_distance, delta_perc_distance);
+            printf("│   Dist_rw(%*d): %*.1f", 4, counter++, 7, last_distance); 
+            printf("%*c", DISPLAY_SETTINGS[0]-(26+24), ' ');
+            printf("\u0394: %*.2f/%9.2f%%   │\n", 8, delta_num_distance, delta_perc_distance);
             vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
         }
         last_avg_distance = 0;
@@ -166,9 +166,14 @@ ptr hc_sr05_serial_mode(gpio_num_t GPIO_PIN, float freq, int test_length){
     distance_array = malloc(test_length * sizeof(float));
     printf("Distance\n");
     for(int i = 0; i < test_length; i++){
-        distance_array[i] = last_distance;
+        // Trigger pulse
+        gpio_set_level(10, 0);
+        gpio_set_level(10, 1);
+        esp_rom_delay_us(10);
+        gpio_set_level(10, 0);
         printf("%f\n", distance_array[i]);
         vTaskDelay(pdMS_TO_TICKS((int)(freq*1000)));
+        distance_array[i] = last_distance;
     }
     wait_enter(0);
     printf("\\end\n");
@@ -201,9 +206,10 @@ static void print_summary(int test_length, float *distance){
 
 static void serial_print(){
     printf("\\start\n");
+    wait_enter(0);
     for(int i = 0; i < test_length_i; i++){
         printf("%f\n", distance_array[i]);
     }
-    printf("\\end\n");
     wait_enter(0);
+    printf("\\end\n");
 }

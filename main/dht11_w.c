@@ -6,14 +6,18 @@
 #include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "constants.h"
-#include "menus.h"
+
 
 typedef void (*ptr)();
 ptr dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length);
-ptr dht11_serial_mode(int type, float freq, int samples, gpio_num_t GPIO_PIN);
+ptr dht11_serial_mode(float freq, int samples, gpio_num_t GPIO_PIN);
 static void print_summary(int test_length, float *temp, float *hum);
 static void serial_print();
 
+/*  
+    Pointer to array that stores all the read values
+    from the last test run
+*/
 static float *temp_array = NULL;
 static float *hum_array = NULL;
 
@@ -30,8 +34,9 @@ static int test_length_i = 0;
 
 */
 ptr dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
-    test_length_i = test_length;
     CLEAR_SCREEN;
+
+    test_length_i = test_length;
     float last_avg_temp = 0;
     float last_avg_hum = 0;
     float last_vals_temp[16] = {0};  
@@ -89,10 +94,7 @@ ptr dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
         last_avg_temp /= 16;
         last_avg_hum /= 16;
         HOR_SEP_TABLE_DW(DISPLAY_SETTINGS[0]);
-
-        
-        printf("\e[1;1H\e[2J");
-        
+        CLEAR_SCREEN;
     }
     print_summary(test_length, temp_array, hum_array);
     return &serial_print;
@@ -115,10 +117,9 @@ ptr dht11_start(gpio_num_t GPIO_PIN, float freq, int test_length){
     By using Screen utility in Linux, with the parameter -L, the user can interact 
     as the same time that all the output is stored in a file
 */
-ptr dht11_serial_mode(int type, float freq, int samples, gpio_num_t GPIO_PIN){
+ptr dht11_serial_mode(float freq, int samples, gpio_num_t GPIO_PIN){
     test_length_i = samples;
     CLEAR_SCREEN;
-    print_header_in_test(type, freq, 0);
     printf("\\start");
     wait_enter(0);
     if(temp_array != NULL){
@@ -165,19 +166,6 @@ static void print_summary(int test_length, float *temp, float *hum){
     HOR_SEP_UP(DISPLAY_SETTINGS[0]);
     printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SUMMARY");
     HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-    /* SENSOR INFO 
-        ACCURACY:
-        TEMPERATURE -> +-2ºC
-        HUMIDITY -> +-5%
-
-        RESOLUTION:
-        Temperature -> 1ºC (8-bit)
-        Humidity -> 1% (8-bit)
-
-        RANGE:
-        Temperature -> 0ºC to 50ºC
-        Humidity -> 20% to 90%
-    */
     printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "SENSOR INFO -> Accuracy: +-2ºC +-5%%");
     printf("│ %-*s ", (DISPLAY_SETTINGS[0]/2)-2, "TEMPERATURE");
     printf(" %-*s │\n", (DISPLAY_SETTINGS[0]/2)-2, "HUMIDITY");

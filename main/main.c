@@ -14,51 +14,12 @@
 #include "hal/timer_hal.h"
 #include "esp_intr_types.h"
 #include "constants.h"
-#include "sensors.h"
 
 #include "onewire.h"
 #include "dht11_w.h"
-#include "menus.h"
 #include "hc_sr05.h"
 
 uint16_t settings[] =   {100,1000};
-
-
-/* PRINT SETTINGS
-    Prints the settings menu and waits for user input.
-    The options can be found in constants.h as SETTINGS_1.
-*/
-uint16_t print_settings(uint16_t option){
-    
-    while(1){
-        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
-        printf("│ %-*s │\n", DISPLAY_SETTINGS[0], "SETTINGS");
-        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
-        for(uint8_t i = 1; i<3; i++){
-            printf("│ ");
-            (option == i) ? printf("%2s","->"): printf("  ");
-            printf("%-*s │\n", DISPLAY_SETTINGS[0], SETTINGS_1[i-1]);
-        }
-        HOR_SEP_DW(DISPLAY_SETTINGS[0]);
-        uint8_t move_temp = wait_enter(0);
-        if(move_temp == 1){
-            return option;
-        }else{
-            if(move_temp == 2){
-                if(option != 1){
-                    option--;
-                }
-            }
-            if(move_temp == 3){
-                if(option != 4){
-                    option++;
-                }
-            }
-        }
-        CLEAR_SCREEN;
-    }
-    return 1;
-}
 
 
 
@@ -66,7 +27,7 @@ uint16_t print_settings(uint16_t option){
     Prints the measure type menu and waits for user input.
     The options can be found in constants.c as TEST_SETTINGS.
 */
-void print_measure_type(){
+void print_test_type(){
 
     // pointer to the function that will be returned
     void (*last_test_print_serial)() = NULL;
@@ -115,7 +76,15 @@ void print_measure_type(){
                             break;
                     }   
                 }else if(option == 5){
-                    last_test_print_serial = dht11_serial_mode(temp_sensor[0], freq, temp_sensor[3], temp_sensor[1]);
+                    switch(temp_sensor[0]){
+                        case 0:
+                            last_test_print_serial = hc_sr05_serial_mode(freq, temp_sensor[3], temp_sensor[1]);
+                            break;
+                        case 1:
+                            last_test_print_serial = dht11_serial_mode(freq, temp_sensor[3], temp_sensor[1]);
+                            break;
+                    }
+                    
                 }else if(option == 6){
                     if(last_test_print_serial != NULL){
                         (*last_test_print_serial)();
@@ -128,7 +97,7 @@ void print_measure_type(){
                 if(option != 0) option--;
                 break;
             case 3:
-                if(option != 6) option++;
+                if(option != 7) option++;
                 break;
             case 4:
                 if(option == 0 && temp_sensor[option] < 2){
@@ -213,6 +182,41 @@ int display_settings() {
     return 1;
 }
 
+/* PRINT MAIN MENU
+    Prints the main menu and waits for user input.
+    The options can be found in constants.h as MENU_STRING.
+*/
+int print_main_menu(int option){
+    while(1){
+        HOR_SEP_UP(DISPLAY_SETTINGS[0]);
+        printf("│ %-*s │\n", DISPLAY_SETTINGS[0]-2, "ESP32 SENSOR MEASUREMENT TOOL");
+        HOR_SEP_MID(DISPLAY_SETTINGS[0]);
+        for(uint8_t i = 1; i<4;i++){
+            printf("│ ");
+            (option == i) ? printf("%2s","->"): printf("  ");
+            printf("%-*s │\n", DISPLAY_SETTINGS[0]-4, MENU_STRING[i-1]);
+        }
+        HOR_SEP_DW(DISPLAY_SETTINGS[0]);
+        uint8_t move_temp = wait_enter(0);
+        if(move_temp == 1){
+            return option;
+        }else{
+            if(move_temp == 2){
+                if(option != 1){
+                    option--;
+                }
+            }
+            if(move_temp == 3){
+                if(option != 4){
+                    option++;
+                }
+            }
+        }
+        CLEAR_SCREEN;
+    }
+    return 1;
+}
+
 /* APP MAIN
     Main function of the program.
     It will start the program and wait for user input to start the measurement.
@@ -226,19 +230,12 @@ void app_main(void){
         CLEAR_SCREEN;
     }
 
-    // SETUP STATUS LED
-    //setup_status_led();
-
-    // set RED LED STATUS ON
-    //gpio_set_level(GPIO_NUM_11, 1);
-    //gpio_set_level(GPIO_NUM_10, 0);
-
     CLEAR_SCREEN;
     while(1){
         switch(print_main_menu(1)){
             case 1: // start measuring
                 CLEAR_SCREEN;
-                print_measure_type();
+                print_test_type();
                 CLEAR_SCREEN;
                 break;
             case 2: // display settings
